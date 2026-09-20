@@ -37,6 +37,9 @@ def _from_json(value):
         return []
 
 
+jinja_env.filters["from_json"] = _from_json
+
+
 async def render_template(template_name: str, context: dict):
     """Render a template with the given context."""
     template = jinja_env.get_template(template_name)

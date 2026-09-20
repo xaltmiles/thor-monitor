@@ -36,8 +36,12 @@ async def run_probes(
         model_names = [m.name for m in models]
         warning = f"Multiple loaded models detected: {', '.join(model_names)}"
     
+    # Collect ollama guidance messages
+    ollama_guidance = [m.guidance for m in models if m.server_type == "ollama" and m.guidance]
+    
     return ProbeResult(
         servers=servers,
         models=models,
-        warning=warning
+        warning=warning,
+        ollama_guidance=ollama_guidance if ollama_guidance else None
     )

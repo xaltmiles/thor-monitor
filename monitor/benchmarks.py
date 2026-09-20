@@ -14,7 +14,11 @@ from .store import (
 from .probes import ServerDetectorImpl, ModelDetectorImpl, run_probes
 from .telemetry.real import RealMemorySource, RealGPUSource, RealGPUMemorySource
 from .telemetry.interface import TelemetrySource
-from .workloads import LongContextWorkloadRunner, BurstWorkloadRunner, WorkloadResult
+from .workloads import (
+    LongContextWorkloadRunner, BurstWorkloadRunner, 
+    OllamaShortWorkloadRunner, OllamaLongContextWorkloadRunner, OllamaBurstWorkloadRunner,
+    WorkloadResult
+)
 
 
 class BenchmarkState:
@@ -200,15 +204,24 @@ class BenchmarkRunner:
         prompt_tokens: int,
         tag: str,
     ) -> BenchmarkRun:
-        """Create the run row and current-run object. Caller must hold self._lock."""
+        """Create the run row and current-run object. Caller must hold self._lock.
+        
+        Supports both llama-server (OpenAI-compatible endpoint) and ollama
+        (native generate API)."""
         # Detect server and model
         servers = await self.server_detector.detect()
+        
+        # Find ollama or llama-server (with port)
+        ollama_servers = [s for s in servers if s.type == "ollama" and s.port]
         llama_servers = [s for s in servers if s.type == "llama-server" and s.port]
         
-        if not llama_servers:
-            raise RuntimeError("No llama-server detected")
-        
-        server = llama_servers[0]
+        # Prefer ollama if detected, else llama-server
+        if ollama_servers:
+            server = ollama_servers[0]
+        elif llama_servers:
+            server = llama_servers[0]
+        else:
+            raise RuntimeError("No ollama or llama-server detected")
         
         # Get model info
         models = await self.model_detector.detect([server])
@@ -231,7 +244,8 @@ class BenchmarkRunner:
             "workload_type": workload_type,
             "max_tokens": max_tokens,
             "prompt_tokens": prompt_tokens,
-            "tag": tag
+            "tag": tag,
+            "server_type": server.type
         })
         
         run_id = await insert_benchmark_run(
@@ -579,23 +593,30 @@ class BenchmarkRunner:
             if on_result:
                 await on_result(name, dict(results))
         
-        # Run short workload (existing implementation)
-        short_runner = self._make_short_runner(suite_params.get("short", {}))
+        # Detect server type from current run (set during _create_run)
+        # Default to llama-server if not set (backward compatibility)
+        server_type = getattr(self, "_current_run", None)
+        server_type = server_type.server_type if server_type else "llama-server"
+        
+        # Run short workload (select runner based on server type)
+        short_runner = self._make_short_runner(suite_params.get("short", {}), server_type)
         await _record("short", await short_runner.run(server_port))
         
-        # Run long-context workload
-        long_context_runner = LongContextWorkloadRunner(
-            prompt_tokens=suite_params["long-context"]["prompt_tokens"],
-            generation_tokens=suite_params["long-context"]["max_tokens"],
-            server_port=server_port
+        # Run long-context workload (select runner based on server type)
+        long_context_runner = self._make_long_context_runner(
+            suite_params["long-context"]["prompt_tokens"],
+            suite_params["long-context"]["max_tokens"],
+            server_port,
+            server_type
         )
         await _record("long-context", await long_context_runner.run(server_port))
         
-        # Run burst workload
-        burst_runner = BurstWorkloadRunner(
-            concurrency=suite_params["burst"]["concurrency"],
-            tokens_per_request=suite_params["burst"]["tokens_per_request"],
-            server_port=server_port
+        # Run burst workload (select runner based on server type)
+        burst_runner = self._make_burst_runner(
+            suite_params["burst"]["concurrency"],
+            suite_params["burst"]["tokens_per_request"],
+            server_port,
+            server_type
         )
         await _record("burst", await burst_runner.run(server_port))
         
@@ -613,12 +634,58 @@ class BenchmarkRunner:
             )
         return _write
     
-    def _make_short_runner(self, params: Dict[str, Any]):
-        """Create a short workload runner (legacy implementation)."""
-        return ShortWorkloadRunner(
-            max_tokens=params.get("max_tokens", 512),
-            prompt_tokens=params.get("prompt_tokens", 64)
-        )
+    def _make_short_runner(self, params: Dict[str, Any], server_type: str = "llama-server"):
+        """Create a short workload runner based on server type."""
+        if server_type == "ollama":
+            return OllamaShortWorkloadRunner(
+                max_tokens=params.get("max_tokens", 512),
+                prompt_tokens=params.get("prompt_tokens", 64)
+            )
+        else:
+            return ShortWorkloadRunner(
+                max_tokens=params.get("max_tokens", 512),
+                prompt_tokens=params.get("prompt_tokens", 64)
+            )
+    
+    def _make_long_context_runner(
+        self,
+        prompt_tokens: int,
+        generation_tokens: int,
+        server_port: int,
+        server_type: str = "llama-server"
+    ):
+        """Create a long-context workload runner based on server type."""
+        if server_type == "ollama":
+            return OllamaLongContextWorkloadRunner(
+                prompt_tokens=prompt_tokens,
+                generation_tokens=generation_tokens
+            )
+        else:
+            return LongContextWorkloadRunner(
+                prompt_tokens=prompt_tokens,
+                generation_tokens=generation_tokens,
+                server_port=server_port
+            )
+    
+    def _make_burst_runner(
+        self,
+        concurrency: int,
+        tokens_per_request: int,
+        server_port: int,
+        server_type: str = "llama-server"
+    ):
+        """Create a burst workload runner based on server type."""
+        if server_type == "ollama":
+            return OllamaBurstWorkloadRunner(
+                concurrency=concurrency,
+                tokens_per_request=tokens_per_request
+            )
+        else:
+            return BurstWorkloadRunner(
+                concurrency=concurrency,
+                tokens_per_request=tokens_per_request,
+                server_port=server_port
+            )
     
     async def _sample_footprint(self) -> Dict[str, Dict[str, Any]]:
         """Sample memory and GPU footprint.

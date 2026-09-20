@@ -43,6 +43,11 @@ class ModelDetectorImpl(ModelDetector):
         """Detect ollama loaded models via its running-model API (GET /api/ps).
         
         Ollama can have multiple models resident at once, so return all of them.
+        
+        Debug logging detection: ollama's /api/ps response includes a "details"
+        object with a "streaming" field when debug logging is enabled.
+        If "streaming" is False or missing, ollama is not logging tokens,
+        which means we can't track passive tok/s.
         """
         port = server.port or 11434
         models = []
@@ -60,12 +65,24 @@ class ModelDetectorImpl(ModelDetector):
                         if not name:
                             continue
                         details = entry.get("details") or {}
+                        
+                        # Check if debug logging is enabled (streaming = True means logs enabled)
+                        streaming = details.get("streaming", False)
+                        guidance = None
+                        if not streaming:
+                            guidance = (
+                                "Ollama debug logging not enabled. "
+                                "Run 'systemctl edit ollama' and add: "
+                                "[Service]\nEnvironment=OLLAMA_DEBUG=1\n"
+                            )
+                        
                         models.append(ModelInfo(
                             name=name,
                             quant=details.get("quantization_level") or None,
                             context_length=entry.get("context_length"),
                             file_size=entry.get("size"),
                             server_type="ollama",
+                            guidance=guidance,
                         ))
         except (httpx.RequestError, ValueError):
             pass

@@ -90,6 +90,31 @@ class FixtureLLaMAStatsSource(LLaMAStatsSource):
         }
 
 
+class FixtureOllamaStatsSource:
+    """Fixture Ollama stats source with configurable values."""
+    
+    def __init__(
+        self,
+        prompt_tokens: int = 0,
+        generated_tokens: int = 0,
+        prompt_tokens_rate: float = 0.0,
+        generated_tokens_rate: float = 0.0
+    ):
+        self.prompt_tokens = prompt_tokens
+        self.generated_tokens = generated_tokens
+        self.prompt_tokens_rate = prompt_tokens_rate
+        self.generated_tokens_rate = generated_tokens_rate
+    
+    async def collect(self) -> dict:
+        """Return fixture Ollama stats data."""
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "generated_tokens": self.generated_tokens,
+            "prompt_tokens_rate": self.prompt_tokens_rate,
+            "generated_tokens_rate": self.generated_tokens_rate
+        }
+
+
 class FixtureTelemetrySource:
     """Fixture telemetry source combining multiple fixture sources."""
     
@@ -99,12 +124,14 @@ class FixtureTelemetrySource:
         gpu_source: GPUSource,
         gpu_memory_source: "FixtureGPUMemorySource" = None,
         llama_stats_source: "FixtureLLaMAStatsSource" = None,
+        ollama_stats_source: "FixtureOllamaStatsSource" = None,
         process_source: ProcessSource = None
     ):
         self.memory_source = memory_source
         self.gpu_source = gpu_source
         self.gpu_memory_source = gpu_memory_source or FixtureGPUMemorySource([])
         self.llama_stats_source = llama_stats_source or FixtureLLaMAStatsSource()
+        self.ollama_stats_source = ollama_stats_source or FixtureOllamaStatsSource()
         self.process_source = process_source or FixtureProcessSource([])
     
     async def collect(self) -> dict:
@@ -113,6 +140,7 @@ class FixtureTelemetrySource:
         gpu = await self.gpu_source.collect()
         gpu_memory = await self.gpu_memory_source.collect()
         llama_stats = await self.llama_stats_source.collect()
+        ollama_stats = await self.ollama_stats_source.collect()
         process = await self.process_source.collect()
         
         return {
@@ -120,5 +148,6 @@ class FixtureTelemetrySource:
             **gpu,
             **gpu_memory,
             **llama_stats,
+            **ollama_stats,
             **process
         }

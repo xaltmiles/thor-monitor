@@ -23,6 +23,7 @@ class ModelInfo:
     context_length: Optional[int] = None
     file_size: Optional[int] = None
     server_type: Optional[str] = None
+    guidance: Optional[str] = None  # User guidance (e.g., "enable debug logging")
 
 
 @dataclass
@@ -31,6 +32,7 @@ class ProbeResult:
     servers: list[ServerInfo]
     models: list[ModelInfo]
     warning: Optional[str] = None
+    ollama_guidance: Optional[list[str]] = None  # Ollama-specific guidance messages
 
 
 class ProbeError(Exception):

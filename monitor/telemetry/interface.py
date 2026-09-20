@@ -81,3 +81,17 @@ class LLaMAStatsSource(ABC):
             Each value is the cumulative counter value
         """
         ...
+
+
+class OllamaStatsSource(ABC):
+    """Abstract base for ollama server log-based metrics sources."""
+    
+    @abstractmethod
+    async def collect(self) -> dict:
+        """Collect ollama stats from debug logs.
+        
+        Returns:
+            dict with keys: prompt_tokens, generated_tokens
+            Each value is the cumulative counter value
+        """
+        ...

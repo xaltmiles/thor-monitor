@@ -18,9 +18,9 @@
                     <th>Context</th>
                     <th>Server</th>
                     <th>Memory</th>
-                    <th>Short (tok/s)</th>
-                    <th>Long-Context (tok/s)</th>
-                    <th>Burst (tok/s)</th>
+                    {% for workload_type in workload_types %}
+                    <th>{{ workload_type|replace('-', ' ')|replace('_', ' ')|title }} (tok/s)</th>
+                    {% endfor %}
                 </tr>
             </thead>
             <tbody>
@@ -31,30 +31,17 @@
                     <td>{{ model.context_length or '-' }}</td>
                     <td>{{ model.server_type or '-' }}</td>
                     <td>{{ model.memory_footprint or '-' }}</td>
+                    {% for workload_type in workload_types %}
                     <td>
-                        {% if model.workload_metrics and model.workload_metrics.short_tok_s %}
-                        <div>best: {{ model.workload_metrics.short_tok_s.best|round(1) }}</div>
-                        <div>avg: {{ model.workload_metrics.short_tok_s.avg|round(1) }}</div>
+                        {% set metric_key = workload_type + '_tok_s' %}
+                        {% if model.workload_metrics and model.workload_metrics[metric_key] %}
+                        <div>best: {{ model.workload_metrics[metric_key].best|round(1) }}</div>
+                        <div>avg: {{ model.workload_metrics[metric_key].avg|round(1) }}</div>
                         {% else %}
                         -
                         {% endif %}
                     </td>
-                    <td>
-                        {% if model.workload_metrics and model.workload_metrics['long-context_tok_s'] %}
-                        <div>best: {{ model.workload_metrics['long-context_tok_s'].best|round(1) }}</div>
-                        <div>avg: {{ model.workload_metrics['long-context_tok_s'].avg|round(1) }}</div>
-                        {% else %}
-                        -
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if model.workload_metrics and model.workload_metrics.burst_tok_s %}
-                        <div>best: {{ model.workload_metrics.burst_tok_s.best|round(1) }}</div>
-                        <div>avg: {{ model.workload_metrics.burst_tok_s.avg|round(1) }}</div>
-                        {% else %}
-                        -
-                        {% endif %}
-                    </td>
+                    {% endfor %}
                 </tr>
                 {% endfor %}
             </tbody>

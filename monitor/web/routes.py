@@ -61,6 +61,7 @@ def create_app():
         content = await render_template("catalog_comparison.html", {
             "models": comparison_data["models"],
             "total_standard_runs": comparison_data["total_standard_runs"],
+            "workload_types": comparison_data.get("workload_types", []),
         })
         return HTMLResponse(content=content)
     

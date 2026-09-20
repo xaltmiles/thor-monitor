@@ -17,7 +17,8 @@ async def get_comparison_data() -> Dict[str, Any]:
     """
     # Get all models to look up file_size
     all_models = await get_all_models()
-    models_by_key = {f"{m.get('name')}_{m.get('quant')}": m for m in all_models}
+    # Use a tuple of (name, quant) as key to avoid collision from model names containing '_'
+    models_by_key = {(m.get('name'), m.get('quant')): m for m in all_models}
     
     # Get all standard benchmark runs
     runs = await get_benchmark_runs(limit=1000)
@@ -26,9 +27,10 @@ async def get_comparison_data() -> Dict[str, Any]:
     standard_runs = [r for r in runs if r.get("standard_run", False)]
     
     # Group by model (name + quant combination)
-    model_runs: Dict[str, List[Dict]] = {}
+    # Use a tuple of (name, quant) as key to avoid collision from model names containing '_'
+    model_runs: Dict[tuple, List[Dict]] = {}
     for run in standard_runs:
-        model_key = f"{run.get('model_name', 'unknown')}_{run.get('model_quant', 'unknown')}"
+        model_key = (run.get('model_name', 'unknown'), run.get('model_quant', 'unknown'))
         if model_key not in model_runs:
             model_runs[model_key] = []
         model_runs[model_key].append(run)
@@ -36,8 +38,7 @@ async def get_comparison_data() -> Dict[str, Any]:
     # Build comparison data
     comparison_data = []
     for model_key, run_list in model_runs.items():
-        model_name = run_list[0].get("model_name", "unknown")
-        model_quant = run_list[0].get("model_quant", "unknown")
+        model_name, model_quant = model_key  # Unpack tuple key
         context_length = run_list[0].get("context_length")
         server_type = run_list[0].get("server_type")
         
@@ -59,14 +60,15 @@ async def get_comparison_data() -> Dict[str, Any]:
         # For each workload, get best/avg values
         tok_s_metrics = {}
         for workload_type, runs in workload_metrics.items():
-            tok_s_values = [r.get("gen_tok_s") for r in runs if r.get("gen_tok_s")]
+            # Use 'is not None' check to allow 0.0 as valid value
+            tok_s_values = [r.get("gen_tok_s") for r in runs if r.get("gen_tok_s") is not None]
             if tok_s_values:
                 tok_s_metrics[f"{workload_type}_tok_s"] = {
                     "best": max(tok_s_values),
                     "avg": sum(tok_s_values) / len(tok_s_values)
                 }
             
-            peak_gen_values = [r.get("peak_gen_tok_s") for r in runs if r.get("peak_gen_tok_s")]
+            peak_gen_values = [r.get("peak_gen_tok_s") for r in runs if r.get("peak_gen_tok_s") is not None]
             if peak_gen_values:
                 tok_s_metrics[f"{workload_type}_peak_gen_tok_s"] = {
                     "best": max(peak_gen_values),
@@ -90,9 +92,18 @@ async def get_comparison_data() -> Dict[str, Any]:
     # Sort by model name
     comparison_data.sort(key=lambda x: x["model_name"])
     
+    # Collect all unique workload types for template rendering
+    all_workload_types = set()
+    for run_list in model_runs.values():
+        for run in run_list:
+            wt = run.get("workload_type")
+            if wt:
+                all_workload_types.add(wt)
+    
     return {
         "models": comparison_data,
         "total_standard_runs": len(standard_runs),
+        "workload_types": sorted(all_workload_types),
     }
 
 
@@ -107,6 +118,10 @@ async def get_timeline_data() -> Dict[str, Any]:
     
     # Get sessions
     sessions = await get_sessions_history(limit=1000)
+    
+    # Get all models once (hoisted out of loop to fix N+1 issue)
+    all_models = await get_all_models()
+    models_by_id = {m.get("id"): m for m in all_models}
     
     # Build timeline events
     timeline_events = []
@@ -161,13 +176,10 @@ async def get_timeline_data() -> Dict[str, Any]:
         avg_tok_s = session.get("avg_tok_s")
         total_tokens = session.get("total_tokens")
         
-        # Get model name from store
+        # Get model name from pre-fetched models dict (N+1 fix)
         model_name = "unknown"
-        models = await get_all_models()
-        for m in models:
-            if m.get("id") == model_id:
-                model_name = m.get("name", "unknown")
-                break
+        if model_id in models_by_id:
+            model_name = models_by_id[model_id].get("name", "unknown")
         
         details_parts = []
         if avg_tok_s:

@@ -41,9 +41,24 @@
                     {% endif %}
                 </div>
                 <div class="event-timestamp">
-                    {{ event.timestamp[:10] }} {{ event.timestamp[11:16] }}
+                    {% if event.timestamp %}
+                        {% set ts = event.timestamp %}
+                        {% if ts|length >= 16 %}
+                            {{ ts[:10] }} {{ ts[11:16] }}
+                        {% else %}
+                            {{ ts }}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
                     {% if event.end_time %}
-                    → {{ event.end_time[:10] }} {{ event.end_time[11:16] }}
+                        → 
+                        {% set et = event.end_time %}
+                        {% if et|length >= 16 %}
+                            {{ et[:10] }} {{ et[11:16] }}
+                        {% else %}
+                            {{ et }}
+                        {% endif %}
                     {% endif %}
                 </div>
             </div>

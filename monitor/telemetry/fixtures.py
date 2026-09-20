@@ -1,6 +1,6 @@
 """Test fixtures for telemetry sources."""
 
-from monitor.telemetry.interface import TelemetrySource, MemorySource, GPUSource, ProcessSource, GPUMemorySource
+from monitor.telemetry.interface import TelemetrySource, MemorySource, GPUSource, ProcessSource, GPUMemorySource, LLaMAStatsSource
 
 
 class FixtureMemorySource(MemorySource):
@@ -59,6 +59,37 @@ class FixtureGPUMemorySource(GPUMemorySource):
         return {"gpu_processes": self.processes}
 
 
+class FixtureLLaMAStatsSource(LLaMAStatsSource):
+    """Fixture LLaMA stats source with configurable values."""
+    
+    def __init__(
+        self,
+        prompt_tokens: int = 0,
+        generated_tokens: int = 0,
+        speculative_accepts: int = 0,
+        prompt_tokens_rate: float = 0.0,
+        generated_tokens_rate: float = 0.0,
+        speculative_accepts_rate: float = 0.0
+    ):
+        self.prompt_tokens = prompt_tokens
+        self.generated_tokens = generated_tokens
+        self.speculative_accepts = speculative_accepts
+        self.prompt_tokens_rate = prompt_tokens_rate
+        self.generated_tokens_rate = generated_tokens_rate
+        self.speculative_accepts_rate = speculative_accepts_rate
+    
+    async def collect(self) -> dict:
+        """Return fixture LLaMA stats data."""
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "generated_tokens": self.generated_tokens,
+            "speculative_accepts": self.speculative_accepts,
+            "prompt_tokens_rate": self.prompt_tokens_rate,
+            "generated_tokens_rate": self.generated_tokens_rate,
+            "speculative_accepts_rate": self.speculative_accepts_rate
+        }
+
+
 class FixtureTelemetrySource:
     """Fixture telemetry source combining multiple fixture sources."""
     
@@ -67,11 +98,13 @@ class FixtureTelemetrySource:
         memory_source: MemorySource,
         gpu_source: GPUSource,
         gpu_memory_source: "FixtureGPUMemorySource" = None,
+        llama_stats_source: "FixtureLLaMAStatsSource" = None,
         process_source: ProcessSource = None
     ):
         self.memory_source = memory_source
         self.gpu_source = gpu_source
         self.gpu_memory_source = gpu_memory_source or FixtureGPUMemorySource([])
+        self.llama_stats_source = llama_stats_source or FixtureLLaMAStatsSource()
         self.process_source = process_source or FixtureProcessSource([])
     
     async def collect(self) -> dict:
@@ -79,11 +112,13 @@ class FixtureTelemetrySource:
         memory = await self.memory_source.collect()
         gpu = await self.gpu_source.collect()
         gpu_memory = await self.gpu_memory_source.collect()
+        llama_stats = await self.llama_stats_source.collect()
         process = await self.process_source.collect()
         
         return {
             **memory,
             **gpu,
             **gpu_memory,
+            **llama_stats,
             **process
         }

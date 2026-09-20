@@ -7,7 +7,7 @@ from typing import Sequence
 from datetime import datetime
 
 from .store import insert_telemetry_sample
-from .telemetry.interface import TelemetrySource
+from .telemetry.interface import TelemetrySource, LLaMAStatsSource
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,9 @@ class Sampler:
                 # Map GPU processes to gpu_process_memory for db storage
                 elif "gpu_processes" in data:
                     sample["gpu_process_memory"] = json.dumps(data["gpu_processes"])
+                # Map LLaMA stats to llama_stats for db storage
+                elif "prompt_tokens" in data or "generated_tokens_rate" in data:
+                    sample["llama_stats"] = json.dumps(data)
                 else:
                     sample.update(data)
             except Exception as e:

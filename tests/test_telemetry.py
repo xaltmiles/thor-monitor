@@ -115,3 +115,27 @@ async def test_fixture_gpu_memory_source():
     assert data["gpu_processes"][0]["pid"] == 1234
     assert data["gpu_processes"][0]["name"] == "ollama"
     assert data["gpu_processes"][0]["gpu_memory"] == 8_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_fixture_llama_stats_source():
+    """Test fixture LLaMA stats source."""
+    from monitor.telemetry.fixtures import FixtureLLaMAStatsSource
+    
+    source = FixtureLLaMAStatsSource(
+        prompt_tokens=10000,
+        generated_tokens=5000,
+        speculative_accepts=500,
+        prompt_tokens_rate=10.0,
+        generated_tokens_rate=5.0,
+        speculative_accepts_rate=0.5
+    )
+    
+    data = await source.collect()
+    
+    assert data["prompt_tokens"] == 10000
+    assert data["generated_tokens"] == 5000
+    assert data["speculative_accepts"] == 500
+    assert data["prompt_tokens_rate"] == 10.0
+    assert data["generated_tokens_rate"] == 5.0
+    assert data["speculative_accepts_rate"] == 0.5

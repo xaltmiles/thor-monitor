@@ -1,9 +1,11 @@
 """Real telemetry sources - collect from actual system."""
 
 import asyncio
+import re
 from typing import Any
 import psutil
-from .interface import MemorySource, GPUSource, ProcessSource, GPUMemorySource
+import httpx
+from .interface import MemorySource, GPUSource, ProcessSource, GPUMemorySource, LLaMAStatsSource
 
 
 class RealMemorySource(MemorySource):
@@ -124,3 +126,72 @@ class RealGPUMemorySource(GPUMemorySource):
             pass
         
         return {"gpu_processes": []}
+
+
+class RealLLaMAStatsSource(LLaMAStatsSource):
+    """Collect llama-server metrics from Prometheus endpoint."""
+    
+    def __init__(self, host: str = "localhost", port: int = 8080, timeout: float = 5.0):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self._last_counters = None
+    
+    async def collect(self) -> dict:
+        """Collect llama-server metrics from /metrics endpoint.
+        
+        Returns:
+            dict with keys: prompt_tokens, generated_tokens, speculative_accepts
+            Each value is the cumulative counter value
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(f"http://{self.host}:{self.port}/metrics")
+                
+                if response.status_code == 200:
+                    metrics_text = response.text
+                    counters = self._parse_metrics(metrics_text)
+                    
+                    # Calculate rates (diff from last sample)
+                    result = counters.copy()
+                    
+                    if self._last_counters:
+                        for key in ["prompt_tokens", "generated_tokens", "speculative_accepts"]:
+                            if key in counters and key in self._last_counters:
+                                delta = counters[key] - self._last_counters[key]
+                                # Rate per second (assuming 1 Hz sampling)
+                                result[f"{key}_rate"] = delta
+                    
+                    self._last_counters = counters
+                    return result
+        except Exception:
+            pass
+        
+        return {
+            "prompt_tokens": 0,
+            "generated_tokens": 0,
+            "speculative_accepts": 0,
+            "prompt_tokens_rate": 0,
+            "generated_tokens_rate": 0,
+            "speculative_accepts_rate": 0
+        }
+    
+    def _parse_metrics(self, metrics_text: str) -> dict:
+        """Parse Prometheus metrics text for llama-server counters."""
+        counters = {}
+        
+        # Patterns for llama-server Prometheus metrics
+        patterns = {
+            "prompt_tokens": r"llamacpp:prompt_tokens_total\s+(\d+)",
+            "generated_tokens": r"llamacpp:tokens_generated_total\s+(\d+)",
+            "speculative_accepts": r"llamacpp:speculative_accepts_total\s+(\d+)",
+        }
+        
+        for key, pattern in patterns.items():
+            match = re.search(pattern, metrics_text)
+            if match:
+                counters[key] = int(match.group(1))
+            else:
+                counters[key] = 0
+        
+        return counters

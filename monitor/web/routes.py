@@ -9,10 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..store import get_latest_telemetry, get_telemetry_history
-from ..telemetry import RealMemorySource, RealGPUSource, RealProcessSource
-from ..telemetry.fixtures import (
-    FixtureMemorySource, FixtureGPUSource, FixtureProcessSource, FixtureGPUMemorySource, FixtureTelemetrySource
-)
+from ..telemetry.real import RealMemorySource, RealGPUSource, RealProcessSource
+from ..telemetry.fixtures import FixtureMemorySource, FixtureGPUSource, FixtureProcessSource, FixtureGPUMemorySource, FixtureLLaMAStatsSource, FixtureTelemetrySource
 from ..sampler import Sampler
 from ..probes import run_probes, FixtureServerDetector, FixtureModelDetector, ServerDetectorImpl
 from ..probes.interface import ProbeResult
@@ -85,6 +83,14 @@ def create_app():
                 {"pid": 1852, "name": "ollama", "gpu_memory": 8_000_000_000},
                 {"pid": 8816, "name": "llama-server", "gpu_memory": 12_000_000_000},
             ]),
+            llama_stats_source=FixtureLLaMAStatsSource(
+                prompt_tokens=10000,
+                generated_tokens=5000,
+                speculative_accepts=500,
+                prompt_tokens_rate=10.0,
+                generated_tokens_rate=5.0,
+                speculative_accepts_rate=0.5
+            ),
             process_source=FixtureProcessSource(processes=[])  # Empty process list for simplicity
         )
         return await fixture.collect()
@@ -129,6 +135,28 @@ def create_app():
                 {"name": "mistral", "quant": "Q4_K_M", "context_length": 8192, "file_size": 4200000000, "server_type": "llama-server"},
             ],
             "warning": "Multiple loaded models detected: llama3, mistral"
+        }
+    
+    @app.get("/api/telemetry/latest")
+    async def api_telemetry_latest():
+        """Get the latest telemetry sample."""
+        return await get_latest_telemetry()
+    
+    @app.get("/api/telemetry/history")
+    async def api_telemetry_history(limit: int = 60):
+        """Get recent telemetry history."""
+        return await get_telemetry_history(limit)
+    
+    @app.get("/api/fixtures/llama-stats")
+    async def api_fixture_llama_stats():
+        """Get fixture llama-server stats for testing."""
+        return {
+            "prompt_tokens": 10000,
+            "generated_tokens": 5000,
+            "speculative_accepts": 500,
+            "prompt_tokens_rate": 10.0,
+            "generated_tokens_rate": 5.0,
+            "speculative_accepts_rate": 0.5
         }
     
     return app

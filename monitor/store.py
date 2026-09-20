@@ -42,6 +42,19 @@ async def init_db():
                 ADD COLUMN gpu_process_memory TEXT
             """)
             await db.commit()
+        
+        # Check if llama_stats column exists
+        cursor = await db.execute("PRAGMA table_info(telemetry_samples)")
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+        
+        if "llama_stats" not in column_names:
+            logger.info("Adding llama_stats column to telemetry_samples")
+            await db.execute("""
+                ALTER TABLE telemetry_samples 
+                ADD COLUMN llama_stats TEXT
+            """)
+            await db.commit()
         await db.execute("""
             CREATE TABLE IF NOT EXISTS models (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,15 +119,16 @@ async def insert_telemetry_sample(
     gpu_temp=None,
     gpu_power=None,
     process_memory=None,
-    gpu_process_memory=None
+    gpu_process_memory=None,
+    llama_stats=None
 ):
     """Insert a telemetry sample into the database."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
             INSERT INTO telemetry_samples 
-            (timestamp, memory_total, memory_free, memory_used, gpu_util, gpu_temp, gpu_power, process_memory, gpu_process_memory)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (timestamp, memory_total, memory_free, memory_used, gpu_util, gpu_temp, gpu_power, process_memory, gpu_process_memory, llama_stats)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -125,7 +139,8 @@ async def insert_telemetry_sample(
                 gpu_temp,
                 gpu_power,
                 process_memory,
-                gpu_process_memory
+                gpu_process_memory,
+                llama_stats
             )
         )
         await db.commit()
@@ -249,6 +264,76 @@ async def get_all_models() -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM models ORDER BY created_at DESC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def insert_session(
+    model_id: int,
+    start_time: str,
+    end_time: str = None,
+    avg_tok_s: float = None,
+    total_tokens: int = None
+) -> int:
+    """Insert a session into the database.
+    
+    Args:
+        model_id: ID of the model being served
+        start_time: Session start timestamp (ISO format)
+        end_time: Session end timestamp (ISO format), optional
+        avg_tok_s: Average tokens per second, optional
+        total_tokens: Total tokens processed, optional
+        
+    Returns:
+        Session ID
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO sessions 
+                (model_id, start_time, end_time, avg_tok_s, total_tokens)
+                VALUES (?, ?, ?, ?, ?)""",
+            (model_id, start_time, end_time, avg_tok_s, total_tokens)
+        )
+        await db.commit()
+        
+        # Return the inserted ID
+        async with db.execute(
+            "SELECT id FROM sessions ORDER BY id DESC LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+
+async def get_active_session() -> Optional[dict]:
+    """Get the currently active session (without end_time).
+    
+    Returns:
+        Session info dict or None if no active session
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def get_sessions_history(limit: int = 100) -> list[dict]:
+    """Get recent sessions.
+    
+    Args:
+        limit: Maximum number of sessions to return
+        
+    Returns:
+        List of session info dicts
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM sessions ORDER BY start_time DESC LIMIT ?",
+            (limit,)
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]

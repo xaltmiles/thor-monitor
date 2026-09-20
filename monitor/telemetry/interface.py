@@ -67,3 +67,17 @@ class GPUMemorySource(ABC):
             Each process entry has: pid, name, gpu_memory
         """
         ...
+
+
+class LLaMAStatsSource(ABC):
+    """Abstract base for llama-server Prometheus metrics sources."""
+    
+    @abstractmethod
+    async def collect(self) -> dict:
+        """Collect llama-server metrics.
+        
+        Returns:
+            dict with keys: prompt_tokens, generated_tokens, speculative_accepts
+            Each value is the cumulative counter value
+        """
+        ...

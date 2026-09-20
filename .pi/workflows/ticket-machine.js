@@ -30,7 +30,8 @@ const TICKETS = {
   required: ['tickets'],
 }
 
-const REPO = 'xaltmiles/thor-monitor'
+const REPO = args?.repo ?? null
+const LABEL = args?.label ?? 'ready-for-agent'
 const MAX_FIX_ROUNDS = args?.maxFixRounds ?? 2
 const MAX_TICKETS = args?.maxTickets ?? 20
 
@@ -41,8 +42,11 @@ let processed = 0
 while (processed < MAX_TICKETS) {
   phase('Discover')
   const frontier = await agent(
-    `In this working directory, find the issue-tracker frontier for ${REPO}: open issues labeled ready-for-agent whose blocking issues are all closed. ` +
-      `Follow the frontier query conventions in docs/agents/issue-tracker.md using the gh CLI. ` +
+    `Find the issue-tracker frontier${REPO ? ` for ${REPO}` : ''} (the repo of this working directory): ` +
+      `open issues labeled "${LABEL}" whose blocking issues are all closed. ` +
+      `If docs/agents/issue-tracker.md exists, follow its frontier query conventions using the gh CLI. ` +
+      `Otherwise: gh issue list --state open --label "${LABEL}", then drop any issue with an open blocker ` +
+      `(GitHub native dependencies via gh api, or a "Blocked by: #N" line in the body). ` +
       `Return every such issue (number + title), in tracker order. If none remain, return an empty list.`,
     { label: 'frontier', phase: 'Discover', schema: TICKETS }
   )

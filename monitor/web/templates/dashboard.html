@@ -122,6 +122,74 @@
         </div>
         
         <div class="grid">
+            <!-- GPU Panel -->
+            <div class="card">
+                <h2>GPU</h2>
+                <div id="gpu-metrics">
+                    <!-- GPU Utilization, Temp, Power -->
+                    <div class="metric">
+                        <span class="metric-label">Utilization</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest and latest.gpu_util is not none %}
+                                {{ latest.gpu_util | int }}%
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Temperature</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest and latest.gpu_temp is not none %}
+                                {{ latest.gpu_temp | int }}°C
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Power</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest and latest.gpu_power is not none %}
+                                {{ latest.gpu_power | int }}W
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+                
+                <!-- Per-Process GPU Memory -->
+                <div id="gpu-process-memory">
+                    <h3 style="margin-top:15px; color:#00d4ff; font-size:0.9em;">Per-Process GPU Memory</h3>
+                    <div id="gpu-process-metrics">
+                        {% if latest and latest.gpu_process_memory %}
+                            {% set gpu_procs = latest.gpu_process_memory | from_json %}
+                            {% if gpu_procs and gpu_procs | length > 0 %}
+                                {% for proc in gpu_procs %}
+                                <div class="metric">
+                                    <span class="metric-label">{{ proc.name | default('Unknown') }}</span>
+                                    <span class="metric-value">
+                                        {{ (proc.gpu_memory / 1e9) | round(2) }} GB
+                                    </span>
+                                </div>
+                                {% endfor %}
+                            {% else %}
+                                <div class="metric">
+                                    <span class="metric-label">No GPU processes</span>
+                                    <span class="metric-value">0.00 GB</span>
+                                </div>
+                            {% endif %}
+                        {% else %}
+                            <div class="metric">
+                                <span class="metric-label">GPU Process</span>
+                                <span class="metric-value loading">Loading...</span>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
             <!-- Loaded Model Card -->
             <div class="card card-loaded-model">
                 <h2>Loaded Model</h2>
@@ -208,60 +276,6 @@
                         <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
                             {% if latest %}
                                 {{ "%.2f" | format(latest.memory_used / 1e9) }} GB
-                            {% else %}
-                                <span class="loading">Loading...</span>
-                            {% endif %}
-                        </span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- GPU Card -->
-            <div class="card">
-                <h2>GPU</h2>
-                <div id="gpu-metrics">
-                    <div class="metric">
-                        <span class="metric-label">Utilization</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
-                            {% if latest and latest.gpu_util is not none %}
-                                {{ latest.gpu_util | int }}%
-                            {% else %}
-                                <span class="loading">Loading...</span>
-                            {% endif %}
-                        </span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-label">Temperature</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
-                            {% if latest and latest.gpu_temp is not none %}
-                                {{ latest.gpu_temp | int }}°C
-                            {% else %}
-                                <span class="loading">Loading...</span>
-                            {% endif %}
-                        </span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-label">Power</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
-                            {% if latest and latest.gpu_power is not none %}
-                                {{ latest.gpu_power | int }}W
-                            {% else %}
-                                <span class="loading">Loading...</span>
-                            {% endif %}
-                        </span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Process Info Card -->
-            <div class="card">
-                <h2>Processes</h2>
-                <div id="process-metrics">
-                    <div class="metric">
-                        <span class="metric-label">Count</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
-                            {% if latest and latest.processes %}
-                                {{ latest.processes | length }}
                             {% else %}
                                 <span class="loading">Loading...</span>
                             {% endif %}

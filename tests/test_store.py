@@ -102,3 +102,66 @@ async def test_get_telemetry_history(temp_db_path):
         assert history[2]["memory_used"] == 16_000_000_000 + 2 * 1_000_000_000
     finally:
         monitor.store.DB_PATH = original_path
+
+
+@pytest.mark.asyncio
+async def test_insert_telemetry_sample_with_gpu_process_memory(temp_db_path):
+    """Test inserting telemetry sample with GPU process memory attribution."""
+    from monitor.store import DB_PATH as original_path
+    import monitor.store
+    import json
+    monitor.store.DB_PATH = temp_db_path
+    
+    try:
+        await init_db()
+        
+        # Insert a sample with GPU process memory
+        gpu_procs = [
+            {"pid": 1234, "name": "ollama", "gpu_memory": 8_000_000_000},
+            {"pid": 5678, "name": "llama-server", "gpu_memory": 12_000_000_000},
+        ]
+        
+        sample = await insert_telemetry_sample(
+            memory_total=32_000_000_000,
+            memory_free=16_000_000_000,
+            memory_used=16_000_000_000,
+            gpu_util=45.0,
+            gpu_temp=70.0,
+            gpu_power=150.0,
+            process_memory="[]",
+            gpu_process_memory=json.dumps(gpu_procs)
+        )
+        
+        # Retrieve it
+        latest = await get_latest_telemetry()
+        
+        assert latest is not None
+        assert latest["gpu_process_memory"] is not None
+        
+        # Parse and verify GPU process data
+        retrieved_procs = json.loads(latest["gpu_process_memory"])
+        assert len(retrieved_procs) == 2
+        assert retrieved_procs[0]["name"] == "ollama"
+        assert retrieved_procs[0]["gpu_memory"] == 8_000_000_000
+    finally:
+        monitor.store.DB_PATH = original_path
+
+
+@pytest.mark.asyncio
+async def test_init_db_creates_tables_with_gpu_process_memory(temp_db_path):
+    """Test that init_db creates table with gpu_process_memory column."""
+    from monitor.store import DB_PATH as original_path
+    import monitor.store
+    monitor.store.DB_PATH = temp_db_path
+    
+    try:
+        await init_db()
+        
+        # Verify gpu_process_memory column exists
+        async with monitor.store.aiosqlite.connect(temp_db_path) as db:
+            cursor = await db.execute("PRAGMA table_info(telemetry_samples)")
+            columns = await cursor.fetchall()
+            column_names = [col[1] for col in columns]
+            assert "gpu_process_memory" in column_names
+    finally:
+        monitor.store.DB_PATH = original_path

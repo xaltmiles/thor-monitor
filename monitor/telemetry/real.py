@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 import psutil
-from .interface import MemorySource, GPUSource, ProcessSource
+from .interface import MemorySource, GPUSource, ProcessSource, GPUMemorySource
 
 
 class RealMemorySource(MemorySource):
@@ -88,3 +88,41 @@ class RealProcessSource(ProcessSource):
                 pass
         
         return {"processes": processes}
+
+
+class RealGPUMemorySource(GPUMemorySource):
+    """Collect per-process GPU memory attribution from nvidia-smi."""
+    
+    async def collect(self) -> dict:
+        """Collect per-process GPU memory using nvidia-smi --query-compute-apps."""
+        try:
+            loop = asyncio.get_event_loop()
+            proc = await loop.run_in_executor(
+                None,
+                lambda: psutil.Popen(
+                    ["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", 
+                     "--format=csv,noheader,nounits"],
+                    stdout=-1, stderr=-1
+                )
+            )
+            stdout, _ = await proc.communicate()
+            
+            if proc.returncode == 0 and stdout:
+                lines = stdout.decode().strip().split("\n")
+                processes = []
+                for line in lines:
+                    parts = line.strip().split(",")
+                    if len(parts) >= 3:
+                        try:
+                            processes.append({
+                                "pid": int(parts[0].strip()),
+                                "name": parts[1].strip(),
+                                "gpu_memory": int(parts[2].strip())
+                            })
+                        except (ValueError, IndexError):
+                            continue
+                return {"gpu_processes": processes}
+        except Exception:
+            pass
+        
+        return {"gpu_processes": []}

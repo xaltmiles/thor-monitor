@@ -53,3 +53,17 @@ class ProcessSource(ABC):
             dict with process information
         """
         ...
+
+
+class GPUMemorySource(ABC):
+    """Abstract base for per-process GPU memory attribution sources."""
+    
+    @abstractmethod
+    async def collect(self) -> dict:
+        """Collect per-process GPU memory attribution.
+        
+        Returns:
+            dict with 'gpu_processes' key containing list of process GPU memory data
+            Each process entry has: pid, name, gpu_memory
+        """
+        ...

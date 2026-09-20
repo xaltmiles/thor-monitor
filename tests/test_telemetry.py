@@ -95,3 +95,23 @@ async def test_fixture_telemetry_source():
     
     assert data["memory_total"] == 32_000_000_000
     assert data["gpu_util"] == 45.0
+
+
+@pytest.mark.asyncio
+async def test_fixture_gpu_memory_source():
+    """Test fixture GPU memory source."""
+    from monitor.telemetry.fixtures import FixtureGPUMemorySource
+    
+    gpu_procs = [
+        {"pid": 1234, "name": "ollama", "gpu_memory": 8_000_000_000},
+        {"pid": 5678, "name": "llama-server", "gpu_memory": 12_000_000_000},
+    ]
+    
+    source = FixtureGPUMemorySource(gpu_procs)
+    data = await source.collect()
+    
+    assert "gpu_processes" in data
+    assert len(data["gpu_processes"]) == 2
+    assert data["gpu_processes"][0]["pid"] == 1234
+    assert data["gpu_processes"][0]["name"] == "ollama"
+    assert data["gpu_processes"][0]["gpu_memory"] == 8_000_000_000

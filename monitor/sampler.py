@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import json
 from typing import Sequence
 from datetime import datetime
 
@@ -69,7 +70,10 @@ class Sampler:
                 data = await source.collect()
                 # Map processes to process_memory for db storage
                 if "processes" in data:
-                    sample["process_memory"] = str(data["processes"])
+                    sample["process_memory"] = json.dumps(data["processes"])
+                # Map GPU processes to gpu_process_memory for db storage
+                elif "gpu_processes" in data:
+                    sample["gpu_process_memory"] = json.dumps(data["gpu_processes"])
                 else:
                     sample.update(data)
             except Exception as e:

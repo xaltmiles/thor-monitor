@@ -4,8 +4,10 @@ import aiosqlite
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
+import logging
 
 DB_PATH = Path.home() / ".monitor" / "monitor.db"
+logger = logging.getLogger(__name__)
 
 
 async def init_db():
@@ -13,6 +15,7 @@ async def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     
     async with aiosqlite.connect(DB_PATH) as db:
+        # Create telemetry_samples table if not exists
         await db.execute("""
             CREATE TABLE IF NOT EXISTS telemetry_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,6 +29,19 @@ async def init_db():
                 process_memory TEXT
             )
         """)
+        
+        # Check if gpu_process_memory column exists
+        cursor = await db.execute("PRAGMA table_info(telemetry_samples)")
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+        
+        if "gpu_process_memory" not in column_names:
+            logger.info("Adding gpu_process_memory column to telemetry_samples")
+            await db.execute("""
+                ALTER TABLE telemetry_samples 
+                ADD COLUMN gpu_process_memory TEXT
+            """)
+            await db.commit()
         await db.execute("""
             CREATE TABLE IF NOT EXISTS models (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,15 +105,16 @@ async def insert_telemetry_sample(
     gpu_util=None,
     gpu_temp=None,
     gpu_power=None,
-    process_memory=None
+    process_memory=None,
+    gpu_process_memory=None
 ):
     """Insert a telemetry sample into the database."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
             INSERT INTO telemetry_samples 
-            (timestamp, memory_total, memory_free, memory_used, gpu_util, gpu_temp, gpu_power, process_memory)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (timestamp, memory_total, memory_free, memory_used, gpu_util, gpu_temp, gpu_power, process_memory, gpu_process_memory)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -107,7 +124,8 @@ async def insert_telemetry_sample(
                 gpu_util,
                 gpu_temp,
                 gpu_power,
-                process_memory
+                process_memory,
+                gpu_process_memory
             )
         )
         await db.commit()

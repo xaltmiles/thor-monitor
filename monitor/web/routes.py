@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from ..store import get_latest_telemetry, get_telemetry_history
 from ..telemetry import RealMemorySource, RealGPUSource, RealProcessSource
 from ..telemetry.fixtures import (
-    FixtureMemorySource, FixtureGPUSource, FixtureProcessSource, FixtureTelemetrySource
+    FixtureMemorySource, FixtureGPUSource, FixtureProcessSource, FixtureGPUMemorySource, FixtureTelemetrySource
 )
 from ..sampler import Sampler
 from ..probes import run_probes, FixtureServerDetector, FixtureModelDetector, ServerDetectorImpl
@@ -67,6 +67,10 @@ def create_app():
         fixture = FixtureTelemetrySource(
             memory_source=FixtureMemorySource(total=32_000_000_000, free=16_000_000_000, used=16_000_000_000),
             gpu_source=FixtureGPUSource(util=45.0, temp=70.0, power=150.0),
+            gpu_memory_source=FixtureGPUMemorySource(processes=[
+                {"pid": 1852, "name": "ollama", "gpu_memory": 8_000_000_000},
+                {"pid": 8816, "name": "llama-server", "gpu_memory": 12_000_000_000},
+            ]),
             process_source=FixtureProcessSource(processes=[])  # Empty process list for simplicity
         )
         return await fixture.collect()

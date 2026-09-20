@@ -13,7 +13,7 @@ from ..telemetry.fixtures import (
     FixtureMemorySource, FixtureGPUSource, FixtureProcessSource, FixtureTelemetrySource
 )
 from ..sampler import Sampler
-from ..probes import run_probes, FixtureServerDetector, FixtureModelDetector
+from ..probes import run_probes, FixtureServerDetector, FixtureModelDetector, ServerDetectorImpl
 from ..probes.interface import ProbeResult
 import jinja2
 
@@ -75,18 +75,18 @@ def create_app():
     @app.get("/api/probes/servers")
     async def api_probes_servers():
         """Get detected servers."""
-        detector = FixtureServerDetector()
+        detector = ServerDetectorImpl()
         servers = await detector.detect()
         return {"servers": [s.__dict__ for s in servers]}
     
     @app.get("/api/probes/models")
     async def api_probes_models():
-        """Get loaded models."""
-        from ..probes import ModelDetectorImpl
-        detector = ModelDetectorImpl()
-        servers = await FixtureServerDetector().detect()
-        models = await detector.detect(servers)
-        return {"models": [m.__dict__ for m in models]}
+        """Get loaded models from really detected servers."""
+        result = await run_probes()
+        return {
+            "models": [m.__dict__ for m in result.models],
+            "warning": result.warning,
+        }
     
     @app.get("/api/probes/detect")
     async def api_probes_detect():

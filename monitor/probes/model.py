@@ -12,8 +12,9 @@ from .interface import ModelDetector, ModelInfo, ProbeError, ServerInfo
 class ModelDetectorImpl(ModelDetector):
     """Detect loaded models by querying server APIs."""
     
-    def __init__(self, client_timeout: float = 5.0):
+    def __init__(self, client_timeout: float = 5.0, transport: Optional[httpx.AsyncBaseTransport] = None):
         self._client_timeout = client_timeout
+        self._transport = transport
     
     async def detect(self, servers: list[ServerInfo]) -> list[ModelInfo]:
         """
@@ -28,72 +29,81 @@ class ModelDetectorImpl(ModelDetector):
         models = []
         
         for server in servers:
-            model = None
-            
             if server.type == "ollama":
-                model = await self._detect_ollama(server)
+                models.extend(await self._detect_ollama(server))
             elif server.type == "llama-server":
                 model = await self._detect_llama_server(server)
-            
-            if model:
-                model.server_type = server.type
-                models.append(model)
+                if model:
+                    model.server_type = server.type
+                    models.append(model)
         
         return models
     
-    async def _detect_ollama(self, server: ServerInfo) -> Optional[ModelInfo]:
-        """Detect ollama loaded model via API."""
-        port = server.port or 11434
+    async def _detect_ollama(self, server: ServerInfo) -> list[ModelInfo]:
+        """Detect ollama loaded models via its running-model API (GET /api/ps).
         
-        # Try running-models endpoint first
+        Ollama can have multiple models resident at once, so return all of them.
+        """
+        port = server.port or 11434
+        models = []
+        
         try:
-            async with httpx.AsyncClient(timeout=self._client_timeout) as client:
-                response = await client.get(f"http://localhost:{port}/api/running-models")
+            async with httpx.AsyncClient(timeout=self._client_timeout, transport=self._transport) as client:
+                response = await client.get(f"http://localhost:{port}/api/ps")
                 
                 if response.status_code == 200:
                     data = response.json()
-                    models = data.get("models", [])
-                    
-                    if models:
-                        model_name = models[0]
-                        # Parse model name to extract quant and context
-                        info = self._parse_ollama_model_name(model_name)
-                        info.server_type = "ollama"
-                        return info
+                    for entry in data.get("models", []):
+                        if not isinstance(entry, dict):
+                            continue
+                        name = entry.get("name") or entry.get("model")
+                        if not name:
+                            continue
+                        details = entry.get("details") or {}
+                        models.append(ModelInfo(
+                            name=name,
+                            quant=details.get("quantization_level") or None,
+                            context_length=entry.get("context_length"),
+                            file_size=entry.get("size"),
+                            server_type="ollama",
+                        ))
         except (httpx.RequestError, ValueError):
             pass
         
-        # Fallback: try /api/ps for process list (may be empty)
-        # For now, return None since we can't reliably detect loaded model
-        # This is acceptable for v1 - the model info will be detected from llama-server
-        return None
+        return models
     
     async def _detect_llama_server(self, server: ServerInfo) -> Optional[ModelInfo]:
         """Detect llama-server loaded model via cmdline and optional API."""
-        # Extract model path from cmdline
-        model_path = None
-        for arg in server.cmdline or []:
-            if arg.startswith("--model="):
-                model_path = arg.split("=", 1)[1]
-                break
-            elif arg == "--model" and server.cmdline:
-                idx = server.cmdline.index(arg)
-                if idx + 1 < len(server.cmdline):
-                    model_path = server.cmdline[idx + 1]
-                    break
+        cmdline = server.cmdline or []
+        # llama.cpp accepts -m/--model for the model path
+        model_path = self._arg_value(cmdline, ["-m", "--model"])
         
         if not model_path:
             return None
         
-        # Parse model filename to extract info
-        model_name = Path(model_path).stem
-        info = self._parse_llama_model_name(model_name, model_path)
+        # Display name: --alias if given, else the model filename stem
+        alias = self._arg_value(cmdline, ["--alias"])
+        model_name = alias or Path(model_path).stem
+        
+        # Ground-truth context length from -c/--ctx-size when present
+        ctx_value = self._arg_value(cmdline, ["-c", "--ctx-size"])
+        context_override = None
+        if ctx_value is not None:
+            try:
+                context_override = int(ctx_value)
+            except ValueError:
+                pass
+        
+        info = self._parse_llama_model_name(model_name, model_path, context_override)
+        # The display name may be an alias with no quant info; fall back to the file stem
+        if info.quant is None:
+            info.quant = self._quant_from_name(Path(model_path).stem)
         info.server_type = "llama-server"
         
         # Try to get additional info from /info endpoint (if available)
         port = server.port or 8080
         try:
-            async with httpx.AsyncClient(timeout=self._client_timeout) as client:
+            async with httpx.AsyncClient(timeout=self._client_timeout, transport=self._transport) as client:
                 response = await client.get(f"http://localhost:{port}/info")
                 if response.status_code == 200:
                     data = response.json()
@@ -108,33 +118,34 @@ class ModelDetectorImpl(ModelDetector):
         
         return info
     
-    def _parse_ollama_model_name(self, name: str) -> ModelInfo:
-        """Parse ollama model name to extract info."""
-        # ollama model names: "model:quant" or "model:tag"
-        # Examples: "llama3:8b", "mistral:7b-instruct-v0.2-q4_K_M"
+    @staticmethod
+    def _arg_value(cmdline: list[str], flags: list[str]) -> Optional[str]:
+        """Get the value for the first matching flag in a command line.
         
-        parts = name.split(":")
-        model_name = parts[0]
-        quant = None
-        
-        if len(parts) > 1:
-            quant = parts[1]
-        
-        # Extract context length if present (e.g., "llama3-70b:70b")
-        context_length = None
-        context_match = re.search(r'(\d+)b', quant or model_name, re.IGNORECASE)
-        if context_match:
-            context_val = int(context_match.group(1))
-            if context_val > 100:  # Likely context length, not parameter count
-                context_length = context_val * 1024  # Convert to tokens
-        
-        return ModelInfo(
-            name=model_name,
-            quant=quant,
-            context_length=context_length
-        )
+        Handles '--flag value', '--flag=value' and attached short forms like '-c4096'.
+        """
+        for i, arg in enumerate(cmdline):
+            if arg in flags:
+                if i + 1 < len(cmdline):
+                    return cmdline[i + 1]
+            for flag in flags:
+                if arg.startswith(flag + "="):
+                    return arg.split("=", 1)[1]
+                # Attached short form (e.g. -c4096): flag is a single dash + one char
+                if len(flag) == 2 and flag.startswith("-") and arg.startswith(flag) and len(arg) > 2:
+                    return arg[2:]
+        return None
     
-    def _parse_llama_model_name(self, name: str, path: str) -> ModelInfo:
+    @staticmethod
+    def _quant_from_name(name: str) -> Optional[str]:
+        """Extract a quantization tag from a model name/filename."""
+        for pattern in (r"Q\d+[_K_M]*", r"fp\d+"):
+            match = re.search(pattern, name, re.IGNORECASE)
+            if match:
+                return match.group(0)
+        return None
+    
+    def _parse_llama_model_name(self, name: str, path: str, context_override: Optional[int] = None) -> ModelInfo:
         """Parse llama-server model name to extract info."""
         # llama-server model names often contain quant info
         # Examples: "mistral-7b-instruct-v0.2.Q4_K_M.gguf", "llama-2-7b.Q2_K.gguf"
@@ -142,34 +153,28 @@ class ModelDetectorImpl(ModelDetector):
         quant = None
         context_length = None
         
-        # Extract quant from filename
-        quant_patterns = [
-            r'Q\d+[_K_M]*',  # Q4_K_M, Q2_K, etc.
-            r'fp\d+',         # fp16, fp32
-        ]
-        
-        for pattern in quant_patterns:
-            match = re.search(pattern, name, re.IGNORECASE)
-            if match:
-                quant = match.group(0)
-                break
+        # Extract quant from name
+        quant = self._quant_from_name(name)
         
         # Extract context length from filename
-        context_match = re.search(r'(\d+)k', name, re.IGNORECASE)
-        if context_match:
-            context_length = int(context_match.group(1)) * 1024
+        if context_override is not None:
+            context_length = context_override
         else:
-            # Try parameter count
-            param_match = re.search(r'(\d+)b', name, re.IGNORECASE)
-            if param_match:
-                params = int(param_match.group(1))
-                # Estimate context length (common values)
-                context_estimates = {
-                    7: 4096,
-                    13: 8192,
-                    70: 8192,
-                }
-                context_length = context_estimates.get(params)
+            context_match = re.search(r'(\d+)k', name, re.IGNORECASE)
+            if context_match:
+                context_length = int(context_match.group(1)) * 1024
+            else:
+                # Try parameter count
+                param_match = re.search(r'(\d+)b', name, re.IGNORECASE)
+                if param_match:
+                    params = int(param_match.group(1))
+                    # Estimate context length (common values)
+                    context_estimates = {
+                        7: 4096,
+                        13: 8192,
+                        70: 8192,
+                    }
+                    context_length = context_estimates.get(params)
         
         # Get file size
         file_size = None

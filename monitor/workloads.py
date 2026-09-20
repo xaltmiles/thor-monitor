@@ -80,7 +80,10 @@ class LongContextWorkloadRunner:
                     {"role": "user", "content": prompt_text}
                 ],
                 "max_tokens": self.generation_tokens,
-                "stream": True
+                "stream": True,
+                # Real llama-server only includes usage (with prompt_tokens)
+                # in the stream when this is requested.
+                "stream_options": {"include_usage": True}
             }
             
             ttft = None

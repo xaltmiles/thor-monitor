@@ -5,6 +5,7 @@ import asyncio
 import json
 import time
 import httpx
+import aiosqlite
 from pathlib import Path
 
 from monitor.benchmarks import BenchmarkRunner, BenchmarkState, BenchmarkRun
@@ -543,3 +544,66 @@ class TestSuiteSettings:
         assert params["burst"]["concurrency"] == 4
 
 
+
+    @pytest.mark.asyncio
+    async def test_suite_reports_progress_incrementally(self, temp_db_path):
+        """Partial results must be persisted after EACH workload, not only at the end.
+
+        Regression guard for the reviewer BLOCKER: /api/benchmarks/progress
+        reads workload_results from the store mid-run; if the suite only wrote
+        at the end, progress would stay 0/None while running.
+        """
+        import json as _json
+
+        import monitor.store
+        from monitor.benchmarks import BenchmarkRunner
+        from monitor.store import get_benchmark_run, insert_benchmark_run, update_benchmark_run
+        from tests.fake_llama_server import FakeLLaMAServer
+
+        monitor.store.DB_PATH = temp_db_path
+
+        async with FakeLLaMAServer(port=18101) as server:
+            await init_db()
+            server.active_requests = 0
+            server.set_streaming_config({"first_chunk_delay_ms": 10, "delay_ms": 5, "tokens_per_chunk": 8})
+
+            runner = BenchmarkRunner()
+
+            async with aiosqlite.connect(str(temp_db_path)) as db:
+                await db.execute(
+                    """INSERT INTO benchmark_runs (model_id, workload_type, standard_run, created_at, state)
+                       VALUES (1, 'standard', 1, '2026-01-01T00:00:00+00:00', 'running')"""
+                )
+                await db.commit()
+                run_id_row = await db.execute("SELECT id FROM benchmark_runs ORDER BY id DESC LIMIT 1")
+                run_id = (await run_id_row.fetchone())[0]
+
+            snapshots = []
+
+            async def on_result(name, snapshot):
+                snapshots.append((name, list(snapshot.keys())))
+                # Mirror the production progress writer: persist the snapshot
+                await update_benchmark_run(
+                    run_id=run_id,
+                    workload_results=_json.dumps({n: r.to_dict() for n, r in snapshot.items()}),
+                )
+                # Mid-run: the store must already hold the completed prefix
+                row = await get_benchmark_run(run_id)
+                stored = _json.loads(row["workload_results"])
+                assert name in stored, f"workload {name} not visible in store immediately after completion"
+
+            suite_params = runner._get_suite_params({"max_tokens": 32})
+            results = await runner._run_suite(server.port, suite_params, on_result=on_result)
+
+            # All three workloads ran, callback fired once per workload in order
+            assert list(results.keys()) == ["short", "long-context", "burst"]
+            assert [n for n, _ in snapshots] == ["short", "long-context", "burst"]
+            assert [list(k) for _, k in snapshots] == [
+                ["short"],
+                ["short", "long-context"],
+                ["short", "long-context", "burst"],
+            ]
+
+            row = await get_benchmark_run(run_id)
+            stored = _json.loads(row["workload_results"])
+            assert set(stored.keys()) == {"short", "long-context", "burst"}

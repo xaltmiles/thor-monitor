@@ -283,7 +283,11 @@ class BenchmarkRunner:
             
             # Load suite settings and run workloads
             suite_params = self._get_suite_params(workload_params)
-            workload_results = await self._run_suite(run.server_port, suite_params)
+            workload_results = await self._run_suite(
+                run.server_port,
+                suite_params,
+                on_result=self._make_progress_writer(run.run_id),
+            )
             
             # Calculate aggregate metrics from all workloads
             total_time = sum(w.total_time for w in workload_results.values())
@@ -558,14 +562,26 @@ class BenchmarkRunner:
     async def _run_suite(
         self,
         server_port: int,
-        suite_params: Dict[str, Dict[str, Any]]
+        suite_params: Dict[str, Dict[str, Any]],
+        on_result=None,
     ) -> Dict[str, WorkloadResult]:
-        """Run all workloads in the suite and return results."""
+        """Run all workloads in the suite and return results.
+        
+        Args:
+            on_result: Optional async callback(name, snapshot) invoked after each
+                workload completes, so progress is visible mid-run (the progress
+                endpoint reads these partial results from the store).
+        """
         results: Dict[str, WorkloadResult] = {}
+        
+        async def _record(name: str, result: WorkloadResult):
+            results[name] = result
+            if on_result:
+                await on_result(name, dict(results))
         
         # Run short workload (existing implementation)
         short_runner = self._make_short_runner(suite_params.get("short", {}))
-        results["short"] = await short_runner.run(server_port)
+        await _record("short", await short_runner.run(server_port))
         
         # Run long-context workload
         long_context_runner = LongContextWorkloadRunner(
@@ -573,7 +589,7 @@ class BenchmarkRunner:
             generation_tokens=suite_params["long-context"]["max_tokens"],
             server_port=server_port
         )
-        results["long-context"] = await long_context_runner.run(server_port)
+        await _record("long-context", await long_context_runner.run(server_port))
         
         # Run burst workload
         burst_runner = BurstWorkloadRunner(
@@ -581,9 +597,21 @@ class BenchmarkRunner:
             tokens_per_request=suite_params["burst"]["tokens_per_request"],
             server_port=server_port
         )
-        results["burst"] = await burst_runner.run(server_port)
+        await _record("burst", await burst_runner.run(server_port))
         
         return results
+    
+    def _make_progress_writer(self, run_id: int):
+        """Persist partial workload results after each workload completes,
+        so /api/benchmarks/progress can name the active workload and ETA mid-run."""
+        async def _write(name: str, snapshot: Dict[str, WorkloadResult]):
+            await update_benchmark_run(
+                run_id=run_id,
+                workload_results=json.dumps(
+                    {n: r.to_dict() for n, r in snapshot.items()}
+                ),
+            )
+        return _write
     
     def _make_short_runner(self, params: Dict[str, Any]):
         """Create a short workload runner (legacy implementation)."""

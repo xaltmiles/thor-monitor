@@ -100,10 +100,10 @@ async def init_db():
             )
         """)
         
-        # Migrate stores created before the state/abort_reason columns existed
+        # Migrate stores created before later columns existed
         cursor = await db.execute("PRAGMA table_info(benchmark_runs)")
         br_columns = [col[1] for col in await cursor.fetchall()]
-        for col in ("state", "abort_reason"):
+        for col in ("state", "abort_reason", "workload_results"):
             if col not in br_columns:
                 logger.info("Adding %s column to benchmark_runs", col)
                 await db.execute(f"ALTER TABLE benchmark_runs ADD COLUMN {col} TEXT")

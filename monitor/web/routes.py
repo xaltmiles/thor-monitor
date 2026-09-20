@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -181,10 +181,9 @@ def create_app():
                 "run": run.to_dict()
             }
         except Exception as e:
-            return {
-                "status": "error",
-                "message": str(e)
-            }, 500
+            # FastAPI does not understand Flask-style (content, status) tuples:
+            # those silently serialize as 200 responses. Raise instead.
+            raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/benchmarks/status")
     async def api_benchmarks_status(request: Request):
@@ -237,21 +236,26 @@ def create_app():
                 pass
         
         # Calculate progress and ETA
-        if run.state == "running" and workloads:
-            # Estimate based on workload type
-            total_workloads = 3  # short, long-context, burst
-            completed = len(workloads)
-            progress = completed / total_workloads
+        WORKLOAD_ORDER = ["short", "long-context", "burst"]
+        completed_names = [w["name"] for w in workloads]
+        total_workloads = len(WORKLOAD_ORDER)
+        
+        if run.state == "running":
+            progress = len(completed_names) / total_workloads
             
-            # ETA based on average workload time (rough estimate)
-            avg_time = sum(w["time"] for w in workloads) / completed if completed > 0 else 0
-            remaining = total_workloads - completed
-            eta = remaining * avg_time if avg_time > 0 else None
+            # Active workload: first in fixed order that has not completed yet
+            remaining_names = [n for n in WORKLOAD_ORDER if n not in completed_names]
+            active_workload = remaining_names[0] if remaining_names else None
             
-            # Active workload is the last one in progress
-            active_workload = workloads[-1]["name"] if workloads else None
+            # ETA based on average completed workload time (rough estimate)
+            avg_time = sum(w["time"] for w in workloads) / len(workloads) if workloads else 0
+            eta = len(remaining_names) * avg_time if avg_time > 0 else None
+        elif run.state == "done":
+            progress = 1
+            eta = None
+            active_workload = None
         else:
-            progress = 0 if run.state == "queued" else 1
+            progress = 0
             eta = None
             active_workload = None
         
@@ -279,8 +283,7 @@ def create_app():
         run = await get_benchmark_run(run_id)
         if run:
             return {"run": run}
-        else:
-            return {"error": "Run not found"}, 404
+        raise HTTPException(status_code=404, detail="Run not found")
     
     return app
 

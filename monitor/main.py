@@ -54,6 +54,11 @@ async def main():
     # Start sampler in background
     sampler_task = asyncio.create_task(sampler.start())
     
+    # Share the live sampler with the web app so settings updates can apply
+    # without a restart (POST /api/settings -> sampler.set_interval).
+    from .web.routes import app as web_app
+    web_app.state.sampler = sampler
+    
     # Start web server (routes.create_app owns the shared BenchmarkRunner)
     logger.info("Starting web server on 0.0.0.0:8000...")
     try:

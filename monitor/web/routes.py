@@ -342,18 +342,12 @@ def create_app():
     @app.get("/api/settings")
     async def api_get_settings():
         """Get current settings."""
-        from ..store import get_settings
+        from ..store import get_settings, DEFAULTS
         
         settings = await get_settings()
         if settings is None:
-            # Return defaults if no settings exist
-            return {
-                "sample_rate": 1,
-                "standard_workload_duration": 10,
-                "max_queue_wait": 120,
-                "warning_gpu_temp": 85.0,
-                "warning_gpu_util": 95.0
-            }
+            # Return defaults if no settings exist (single source of truth: store.DEFAULTS)
+            return dict(DEFAULTS)
         return settings
     
     @app.post("/api/settings")
@@ -416,10 +410,9 @@ def create_app():
             warning_gpu_util=warning_gpu_util
         )
         
-        # Update sampler interval if sample_rate changed
-        if "sample_rate" in data and hasattr(app.state, "sampler"):
-            new_interval = 1.0 / sample_rate
-            app.state.sampler.set_interval(new_interval)
+        # Update sampler interval if sample_rate changed (applies live)
+        if sample_rate is not None and hasattr(app.state, "sampler"):
+            app.state.sampler.set_interval(1.0 / sample_rate)
         
         return settings
     

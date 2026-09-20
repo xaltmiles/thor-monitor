@@ -252,3 +252,49 @@ class TestSettingsIntegration:
                 assert "custom" in row["tags"]
         finally:
             monitor.store.DB_PATH = original_path
+
+    @pytest.mark.asyncio
+    async def test_sample_rate_applies_live_to_sampler(self, temp_db_path):
+        """POST /api/settings with sample_rate must reach the live sampler.
+
+        Regression guard: app.state.sampler was never assigned, so the
+        'apply without restart' acceptance criterion was silently unmet.
+        """
+        import monitor.store
+        from monitor.web.routes import app
+        import httpx
+
+        original_path = monitor.store.DB_PATH
+        monitor.store.DB_PATH = temp_db_path
+
+        class StubSampler:
+            def __init__(self):
+                self.interval = 1.0
+                self.calls = []
+
+            def set_interval(self, interval):
+                self.calls.append(interval)
+                self.interval = interval
+
+        stub = StubSampler()
+        app.state.sampler = stub
+        try:
+            await init_db()
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/api/settings", json={"sample_rate": 4})
+                assert response.status_code == 200
+                assert stub.calls == [0.25], f"sampler not updated live: {stub.calls}"
+
+                # Null sample_rate must be ignored, not crash with a 500
+                response = await client.post("/api/settings", json={"sample_rate": None})
+                assert response.status_code == 200
+                assert stub.calls == [0.25], "null sample_rate must not touch the sampler"
+        finally:
+            monitor.store.DB_PATH = original_path
+            # Remove the stub so other tests are unaffected
+            try:
+                del app.state.sampler
+            except AttributeError:
+                pass

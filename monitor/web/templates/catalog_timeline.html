@@ -1,0 +1,64 @@
+{# Catalog timeline - shows runs and sessions chronologically #}
+{% extends "base_catalog.html" %}
+
+{% block title %}Catalog: Timeline{% endblock %}
+
+{% block content %}
+<div class="catalog-timeline">
+    <h1>Catalog: Timeline</h1>
+    <p class="subtitle">Benchmark runs and sessions over time</p>
+    
+    {% if events %}
+    <div class="timeline">
+        {% for event in events %}
+        <div class="timeline-event {{ event.type }}">
+            <div class="event-type">
+                {% if event.type == 'benchmark' %}
+                📊
+                {% elif event.type == 'session' %}
+                👁️
+                {% else %}
+                •
+                {% endif %}
+            </div>
+            <div class="event-details">
+                <div class="event-header">
+                    <span class="event-model">{{ event.model_name }}</span>
+                    {% if event.server_type %}
+                    <span class="event-server">({{ event.server_type }})</span>
+                    {% endif %}
+                    {% if event.type == 'benchmark' and event.workload_type %}
+                    <span class="event-workload">{{ event.workload_type }}</span>
+                    {% endif %}
+                    {% if event.type == 'benchmark' and event.standard_run == false %}
+                    <span class="event-custom">custom</span>
+                    {% endif %}
+                </div>
+                <div class="event-content">
+                    <div class="event-details-text">{{ event.details }}</div>
+                    {% if event.memory_footprint %}
+                    <div class="event-memory">memory: {{ event.memory_footprint }}</div>
+                    {% endif %}
+                </div>
+                <div class="event-timestamp">
+                    {{ event.timestamp[:10] }} {{ event.timestamp[11:16] }}
+                    {% if event.end_time %}
+                    → {{ event.end_time[:10] }} {{ event.end_time[11:16] }}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No benchmark runs or sessions found in the catalog.</p>
+        <p>Run a benchmark or start a session to populate the timeline.</p>
+    </div>
+    {% endif %}
+    
+    <div class="catalog-footer">
+        <p>{{ total_runs }} benchmark run(s), {{ total_sessions }} session(s)</p>
+    </div>
+</div>
+{% endblock %}

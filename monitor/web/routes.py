@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..store import get_latest_telemetry, get_telemetry_history
+from .catalog import get_comparison_data, get_timeline_data
 from ..telemetry.real import RealMemorySource, RealGPUSource, RealProcessSource
 from ..telemetry.fixtures import FixtureMemorySource, FixtureGPUSource, FixtureProcessSource, FixtureGPUMemorySource, FixtureLLaMAStatsSource, FixtureTelemetrySource
 from ..sampler import Sampler
@@ -52,6 +53,27 @@ def create_app():
     # across requests, so never instantiate per-request.
     from ..benchmarks import BenchmarkRunner
     app.state.benchmark_runner = BenchmarkRunner()
+    
+    @app.get("/catalog/comparison", response_class=HTMLResponse)
+    async def catalog_comparison():
+        """Render the comparison table page."""
+        comparison_data = await get_comparison_data()
+        content = await render_template("catalog_comparison.html", {
+            "models": comparison_data["models"],
+            "total_standard_runs": comparison_data["total_standard_runs"],
+        })
+        return HTMLResponse(content=content)
+    
+    @app.get("/catalog/timeline", response_class=HTMLResponse)
+    async def catalog_timeline():
+        """Render the timeline page."""
+        timeline_data = await get_timeline_data()
+        content = await render_template("catalog_timeline.html", {
+            "events": timeline_data["events"],
+            "total_runs": timeline_data["total_runs"],
+            "total_sessions": timeline_data["total_sessions"],
+        })
+        return HTMLResponse(content=content)
     
     @app.get("/", response_class=HTMLResponse)
     async def dashboard():

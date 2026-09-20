@@ -1,0 +1,74 @@
+{# Catalog comparison table - shows per-model comparison #}
+{% extends "base_catalog.html" %}
+
+{% block title %}Catalog: Comparison Table{% endblock %}
+
+{% block content %}
+<div class="catalog-comparison">
+    <h1>Catalog: Comparison Table</h1>
+    <p class="subtitle">Standard runs only — best and average tok/s per workload, memory footprint</p>
+    
+    {% if models %}
+    <div class="table-container">
+        <table class="catalog-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Quant</th>
+                    <th>Context</th>
+                    <th>Server</th>
+                    <th>Memory</th>
+                    <th>Short (tok/s)</th>
+                    <th>Long-Context (tok/s)</th>
+                    <th>Burst (tok/s)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for model in models %}
+                <tr>
+                    <td><strong>{{ model.model_name }}</strong></td>
+                    <td>{{ model.model_quant or '-' }}</td>
+                    <td>{{ model.context_length or '-' }}</td>
+                    <td>{{ model.server_type or '-' }}</td>
+                    <td>{{ model.memory_footprint or '-' }}</td>
+                    <td>
+                        {% if model.workload_metrics and model.workload_metrics.short_tok_s %}
+                        <div>best: {{ model.workload_metrics.short_tok_s.best|round(1) }}</div>
+                        <div>avg: {{ model.workload_metrics.short_tok_s.avg|round(1) }}</div>
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if model.workload_metrics and model.workload_metrics['long-context_tok_s'] %}
+                        <div>best: {{ model.workload_metrics['long-context_tok_s'].best|round(1) }}</div>
+                        <div>avg: {{ model.workload_metrics['long-context_tok_s'].avg|round(1) }}</div>
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if model.workload_metrics and model.workload_metrics.burst_tok_s %}
+                        <div>best: {{ model.workload_metrics.burst_tok_s.best|round(1) }}</div>
+                        <div>avg: {{ model.workload_metrics.burst_tok_s.avg|round(1) }}</div>
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No standard benchmark runs found in the catalog.</p>
+        <p>Run a benchmark to populate the comparison table.</p>
+    </div>
+    {% endif %}
+    
+    <div class="catalog-footer">
+        <p>Showing {{ total_standard_runs }} standard benchmark run(s)</p>
+    </div>
+</div>
+{% endblock %}

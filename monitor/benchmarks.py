@@ -14,6 +14,7 @@ from .store import (
 from .probes import ServerDetectorImpl, ModelDetectorImpl, run_probes
 from .telemetry.real import RealMemorySource, RealGPUSource, RealGPUMemorySource
 from .telemetry.interface import TelemetrySource
+from .workloads import LongContextWorkloadRunner, BurstWorkloadRunner, WorkloadResult
 
 
 class BenchmarkState:
@@ -236,7 +237,7 @@ class BenchmarkRunner:
     async def _run_benchmark(self, run: BenchmarkRun, workload_params: Dict[str, Any]) -> None:
         """Execute the benchmark run logic (queued -> running -> done/aborted).
         
-        This is the core async task that runs the benchmark.
+        This is the core async task that runs the benchmark suite.
         """
         try:
             # Phase 1: Queue until idle (or timeout)
@@ -246,7 +247,7 @@ class BenchmarkRunner:
             if run.state == BenchmarkState.ABORTED:
                 return
             
-            # Phase 2: Run workload
+            # Phase 2: Run workload suite
             run.state = BenchmarkState.RUNNING
             
             # Update run to running state
@@ -255,14 +256,30 @@ class BenchmarkRunner:
             # Sample footprint before run
             footprint_before = await self._sample_footprint()
             
-            # Run the actual workload
-            workload_start = time.time()
-            ttft, peak_gen_tok_s, tokens_generated = await self._run_workload(
-                run.server_port,
-                max_tokens=workload_params.get("max_tokens", 512)
-            )
+            # Load suite settings and run workloads
+            suite_params = self._get_suite_params(workload_params)
+            workload_results = await self._run_suite(run.server_port, suite_params)
             
-            workload_total = time.time() - workload_start
+            # Calculate aggregate metrics from all workloads
+            total_time = sum(w.total_time for w in workload_results.values())
+            
+            # Extract TTFT and peak tok/s from workloads
+            ttft = workload_results.get("short").ttft if "short" in workload_results else None
+            peak_gen_tok_s = 0.0
+            prompt_tok_s = 0.0
+            aggregate_tok_s = 0.0
+            
+            for w in workload_results.values():
+                if w.workload_name == "short" or w.workload_name == "burst":
+                    peak_gen_tok_s = max(peak_gen_tok_s, w.tokens_per_second)
+                if w.workload_name == "long-context":
+                    prompt_tok_s = w.tokens_per_second
+                if w.workload_name == "burst":
+                    aggregate_tok_s = w.tokens_per_second
+            
+            peak_gen_tok_s = peak_gen_tok_s or 0
+            prompt_tok_s = prompt_tok_s or 0
+            aggregate_tok_s = aggregate_tok_s or 0
             
             # Sample footprint during run (continuously during generation)
             footprint_during = await self._sample_footprint()
@@ -271,16 +288,21 @@ class BenchmarkRunner:
             await asyncio.sleep(1)  # Brief wait for settling
             footprint_after = await self._sample_footprint()
             
-            # Update run with final metrics
-            peak_gen_tok_s = peak_gen_tok_s or 0
-            gen_tok_s = tokens_generated / workload_total if workload_total > 0 else 0
+            # Store workload results as JSON
+            results_json = json.dumps({
+                name: result.to_dict() for name, result in workload_results.items()
+            })
             
+            # Update run with final metrics
             await update_benchmark_run(
                 run_id=run.run_id,
-                total_time=workload_total,
+                total_time=total_time,
                 ttft=ttft,
-                gen_tok_s=gen_tok_s,
+                prompt_tok_s=prompt_tok_s,
+                gen_tok_s=peak_gen_tok_s,
                 peak_gen_tok_s=peak_gen_tok_s,
+                concurrent_throughput=aggregate_tok_s,
+                workload_results=results_json,
                 memory_before=json.dumps(footprint_before.get("memory", {})),
                 memory_during=json.dumps(footprint_during.get("memory", {})),
                 memory_after=json.dumps(footprint_after.get("memory", {})),
@@ -292,7 +314,7 @@ class BenchmarkRunner:
             run.state = BenchmarkState.DONE
             run.ttft = ttft
             run.peak_gen_tok_s = peak_gen_tok_s
-            run.total_time = workload_total
+            run.total_time = total_time
             run.finished_at = time.time()
             
         except Exception as e:
@@ -473,6 +495,67 @@ class BenchmarkRunner:
         
         return 0
     
+    def _get_suite_params(self, workload_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Get suite parameters, merging workload_params with defaults."""
+        defaults = {
+            "short": {
+                "prompt_tokens": 64,
+                "max_tokens": 512,
+            },
+            "long-context": {
+                "prompt_tokens": 16384,
+                "max_tokens": 32,
+            },
+            "burst": {
+                "concurrency": 4,
+                "tokens_per_request": 128,
+            }
+        }
+        
+        # Merge user parameters with defaults
+        for name, params in workload_params.items():
+            if name in defaults:
+                defaults[name].update(params)
+        
+        return defaults
+    
+    async def _run_suite(
+        self,
+        server_port: int,
+        suite_params: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, WorkloadResult]:
+        """Run all workloads in the suite and return results."""
+        results: Dict[str, WorkloadResult] = {}
+        
+        # Run short workload (existing implementation)
+        short_runner = self._make_short_runner(suite_params.get("short", {}))
+        results["short"] = await short_runner.run(server_port)
+        
+        # Run long-context workload
+        long_context_runner = LongContextWorkloadRunner(
+            prompt_tokens=suite_params["long-context"]["prompt_tokens"],
+            generation_tokens=suite_params["long-context"]["max_tokens"],
+            server_port=server_port
+        )
+        results["long-context"] = await long_context_runner.run(server_port)
+        
+        # Run burst workload
+        burst_runner = BurstWorkloadRunner(
+            concurrency=suite_params["burst"]["concurrency"],
+            tokens_per_request=suite_params["burst"]["tokens_per_request"],
+            server_port=server_port
+        )
+        results["burst"] = await burst_runner.run(server_port)
+        
+        return results
+    
+    def _make_short_runner(self, params: Dict[str, Any]):
+        """Create a short workload runner (legacy implementation)."""
+        return ShortWorkloadRunner(
+            max_tokens=params.get("max_tokens", 512),
+            prompt_tokens=params.get("prompt_tokens", 64)
+        )
+    
     async def _sample_footprint(self) -> Dict[str, Dict[str, Any]]:
         """Sample memory and GPU footprint.
         
@@ -487,3 +570,118 @@ class BenchmarkRunner:
             "memory": memory_data,
             "gpu": {**gpu_data, "processes": gpu_memory_data.get("gpu_processes", [])}
         }
+
+
+class ShortWorkloadRunner:
+    """Short workload runner - original implementation."""
+    
+    def __init__(
+        self,
+        max_tokens: int = 512,
+        prompt_tokens: int = 64
+    ):
+        self.max_tokens = max_tokens
+        self.prompt_tokens = prompt_tokens
+    
+    async def run(self, port: int) -> WorkloadResult:
+        """Run the short workload."""
+        prompt_text = "Once upon a time in a digital realm, there was a model that could generate"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            request = {
+                "model": "benchmark-model",
+                "messages": [
+                    {"role": "user", "content": prompt_text}
+                ],
+                "max_tokens": self.max_tokens,
+                "stream": True
+            }
+            
+            ttft = None
+            tokens_generated = 0
+            gen_rates: List[float] = []
+            last_chunk_time = None
+            window_start = None
+            window_tokens = 0
+            
+            request_start_time = time.time()
+            
+            try:
+                async with client.stream("POST", f"http://localhost:{port}/v1/chat/completions", json=request) as response:
+                    response.raise_for_status()
+                    
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        
+                        if line.strip() == "data: [DONE]":
+                            break
+                        
+                        try:
+                            chunk = json.loads(line[6:])
+                        except json.JSONDecodeError:
+                            continue
+                        
+                        chunk_time = time.time()
+                        
+                        if ttft is None and chunk.get("choices"):
+                            ttft = chunk_time - request_start_time
+                            last_chunk_time = chunk_time
+                        
+                        if ttft is not None:
+                            tokens_in_chunk = self._count_tokens_in_chunk(chunk)
+                            if tokens_in_chunk > 0:
+                                if window_start is None:
+                                    window_start = chunk_time
+                                    window_tokens = 0
+                                window_tokens += tokens_in_chunk
+                                if chunk_time - window_start >= 0.05:  # GEN_WINDOW_SECONDS
+                                    gen_rates.append(window_tokens / (chunk_time - window_start))
+                                    window_start = chunk_time
+                                    window_tokens = 0
+                                last_chunk_time = chunk_time
+                                tokens_generated += tokens_in_chunk
+                    
+                    # Flush any open window
+                    if window_start is not None and window_tokens > 0 and last_chunk_time:
+                        window_duration = max(last_chunk_time - window_start, 0.05)
+                        gen_rates.append(window_tokens / window_duration)
+                    
+                    peak_gen_tok_s = max(gen_rates) if gen_rates else 0
+                    total_time = time.time() - request_start_time
+                    
+                    return WorkloadResult(
+                        workload_name="short",
+                        total_time=total_time,
+                        tokens_per_second=peak_gen_tok_s,
+                        ttft=ttft,
+                        generated_tokens=tokens_generated
+                    )
+                    
+            except httpx.RequestError:
+                total_time = time.time() - request_start_time
+                return WorkloadResult(
+                    workload_name="short",
+                    total_time=total_time,
+                    tokens_per_second=0,
+                    ttft=None,
+                    generated_tokens=tokens_generated
+                )
+    
+    def _count_tokens_in_chunk(self, chunk: Dict[str, Any]) -> int:
+        """Count tokens in a chunk from the streaming response."""
+        try:
+            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            if "content" in delta:
+                content = delta["content"]
+                if content and content != "[DONE]":
+                    return len(content) // 4
+        except (IndexError, KeyError):
+            pass
+        
+        usage = chunk.get("usage", {})
+        completion_tokens = usage.get("completion_tokens", 0)
+        if completion_tokens > 0:
+            return completion_tokens
+        
+        return 0

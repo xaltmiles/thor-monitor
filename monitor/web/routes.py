@@ -203,6 +203,66 @@ def create_app():
                 "run": None
             }
     
+    @app.get("/api/benchmarks/progress")
+    async def api_benchmarks_progress(request: Request):
+        """Get benchmark run progress."""
+        runner = request.app.state.benchmark_runner
+        run = await runner.get_status()
+        
+        if not run or run.state == "idle":
+            return {
+                "state": "idle",
+                "active_workload": None,
+                "eta": None,
+                "workloads": []
+            }
+        
+        # Get stored run data for progress tracking
+        from ..store import get_benchmark_run
+        stored = await get_benchmark_run(run.run_id)
+        
+        # Parse workload results if available
+        workloads = []
+        if stored and stored.get("workload_results"):
+            import json
+            try:
+                results = json.loads(stored["workload_results"])
+                for name, data in results.items():
+                    workloads.append({
+                        "name": data.get("workload_name", name),
+                        "time": data.get("total_time", 0),
+                        "tokens_per_second": data.get("tokens_per_second", 0)
+                    })
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # Calculate progress and ETA
+        if run.state == "running" and workloads:
+            # Estimate based on workload type
+            total_workloads = 3  # short, long-context, burst
+            completed = len(workloads)
+            progress = completed / total_workloads
+            
+            # ETA based on average workload time (rough estimate)
+            avg_time = sum(w["time"] for w in workloads) / completed if completed > 0 else 0
+            remaining = total_workloads - completed
+            eta = remaining * avg_time if avg_time > 0 else None
+            
+            # Active workload is the last one in progress
+            active_workload = workloads[-1]["name"] if workloads else None
+        else:
+            progress = 0 if run.state == "queued" else 1
+            eta = None
+            active_workload = None
+        
+        return {
+            "state": run.state,
+            "active_workload": active_workload,
+            "eta": eta,
+            "workloads": workloads,
+            "progress": progress
+        }
+    
     @app.get("/api/benchmarks/runs")
     async def api_benchmarks_runs(limit: int = 10):
         """Get recent benchmark runs."""

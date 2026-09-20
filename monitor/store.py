@@ -86,6 +86,7 @@ async def init_db():
                 server_port INTEGER,
                 workload_params TEXT,
                 tags TEXT,
+                workload_results TEXT,
                 memory_before TEXT,
                 memory_during TEXT,
                 memory_after TEXT,
@@ -472,6 +473,7 @@ async def insert_benchmark_run(
     state: str = None,
     workload_params: str = None,
     tags: str = None,
+    workload_results: str = None,
     memory_before: str = None,
     memory_during: str = None,
     memory_after: str = None,
@@ -513,14 +515,14 @@ async def insert_benchmark_run(
                 (model_id, workload_type, standard_run, total_time, ttft,
                  prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
                  model_name, model_quant, context_length, server_type,
-                 server_port, state, workload_params, tags,
+                server_port, state, workload_params, tags, workload_results,
                  memory_before, memory_during, memory_after,
                  gpu_before, gpu_during, gpu_after, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (model_id, workload_type, standard_run, total_time, ttft,
              prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
              model_name, model_quant, context_length, server_type,
-             server_port, state, workload_params, tags,
+             server_port, state, workload_params, tags, workload_results,
              memory_before, memory_during, memory_after,
              gpu_before, gpu_during, gpu_after,
              datetime.now(timezone.utc).isoformat())
@@ -545,6 +547,7 @@ async def update_benchmark_run(
     gen_tok_s: float = None,
     peak_gen_tok_s: float = None,
     concurrent_throughput: float = None,
+    workload_results: str = None,
     memory_before: str = None,
     memory_during: str = None,
     gpu_before: str = None,
@@ -577,7 +580,7 @@ async def update_benchmark_run(
                     prompt_tok_s = COALESCE(?, prompt_tok_s),
                     gen_tok_s = COALESCE(?, gen_tok_s),
                     peak_gen_tok_s = COALESCE(?, peak_gen_tok_s),
-                    concurrent_throughput = COALESCE(?, concurrent_throughput),
+                    concurrent_throughput = COALESCE(?, concurrent_throughput),                    workload_results = COALESCE(?, workload_results),
                     memory_before = COALESCE(?, memory_before),
                     memory_during = COALESCE(?, memory_during),
                     gpu_before = COALESCE(?, gpu_before),
@@ -586,7 +589,7 @@ async def update_benchmark_run(
                     gpu_after = COALESCE(?, gpu_after)
                 WHERE id = ?""",
             (state, abort_reason, total_time, ttft, prompt_tok_s, gen_tok_s,
-             peak_gen_tok_s, concurrent_throughput, memory_before, memory_during,
+             peak_gen_tok_s, concurrent_throughput, workload_results, memory_before, memory_during,
              gpu_before, gpu_during, memory_after, gpu_after, run_id)
         )
         await db.commit()

@@ -309,6 +309,19 @@
                     <span class="metric-label">Status</span>
                     <span class="metric-value" id="benchmark-status-value">Idle</span>
                 </div>
+                
+                <!-- Progress Display -->
+                <div id="benchmark-progress" style="margin-top: 10px;">
+                    <div class="metric-label">Progress</div>
+                    <div style="background: #1f3b6e; border-radius: 6px; padding: 4px; margin-bottom: 10px;">
+                        <div id="benchmark-progress-bar" 
+                             style="background: #00d4ff; height: 8px; border-radius: 4px; width: 0%; transition: width 0.3s;">
+                        </div>
+                    </div>
+                    <div id="benchmark-workload" class="metric-label" style="font-size: 0.9em; color: #00d4ff;">No workload running</div>
+                    <div id="benchmark-eta" class="metric-label" style="font-size: 0.9em; color: #888;"></div>
+                </div>
+                
                 <div id="benchmark-stats">
                     <div class="metric">
                         <span class="metric-label">TTFT</span>
@@ -394,12 +407,20 @@
         setInterval(updateTokenSpeeds, 1000);
         updateTokenSpeeds();
         
-        // Update benchmark status every 2 seconds
+        // Update benchmark status and progress every 2 seconds
         async function updateBenchmarkStatus() {
             try {
-                const response = await fetch('/api/benchmarks/status');
-                if (!response.ok) return;
-                const data = await response.json();
+                // First get status
+                const statusResponse = await fetch('/api/benchmarks/status');
+                if (!statusResponse.ok) return;
+                const statusData = await statusResponse.json();
+                
+                // Then get progress
+                const progressResponse = await fetch('/api/benchmarks/progress');
+                let progressData = null;
+                if (progressResponse.ok) {
+                    progressData = await progressResponse.json();
+                }
                 
                 const statusEl = document.getElementById('benchmark-status-value');
                 const ttftEl = document.getElementById('benchmark-ttft');
@@ -407,13 +428,43 @@
                 const totalTimeEl = document.getElementById('benchmark-total-time');
                 const errorEl = document.getElementById('benchmark-error');
                 
-                const run = data.run;
+                // Progress elements
+                const progressEl = document.getElementById('benchmark-progress');
+                const progressElBar = document.getElementById('benchmark-progress-bar');
+                const workloadEl = document.getElementById('benchmark-workload');
+                const etaEl = document.getElementById('benchmark-eta');
+                
+                const run = statusData.run;
                 
                 if (run) {
                     // Update status
                     statusEl.textContent = run.state;
                     statusEl.className = run.state === 'aborted' ? 'metric-value warning' : 
                                         run.state === 'running' ? 'metric-value' : 'metric-value';
+                    
+                    // Update progress display if available
+                    if (progressData && progressData.state === 'running') {
+                        progressEl.style.display = 'block';
+                        
+                        const progress = progressData.progress || 0;
+                        progressElBar.style.width = (progress * 100) + '%';
+                        
+                        const workloadName = progressData.active_workload || 'Running...';
+                        workloadEl.textContent = 'Active workload: ' + workloadName;
+                        
+                        if (progressData.eta !== null && progressData.eta !== undefined) {
+                            etaEl.textContent = 'ETA: ' + progressData.eta.toFixed(1) + ' s';
+                        } else {
+                            etaEl.textContent = '';
+                        }
+                    } else if (progressData && progressData.state === 'queued') {
+                        progressEl.style.display = 'block';
+                        progressElBar.style.width = '0%';
+                        workloadEl.textContent = 'Waiting for server idle...';
+                        etaEl.textContent = '';
+                    } else {
+                        progressEl.style.display = 'none';
+                    }
                     
                     // Update stats if available
                     if (run.ttft !== null && run.ttft !== undefined) {

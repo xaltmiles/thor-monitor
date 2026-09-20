@@ -444,3 +444,81 @@ class TestBenchmarkStateMachine:
         assert run_dict["state"] == BenchmarkState.QUEUED
         assert "started_at" in run_dict
         assert "finished_at" in run_dict
+
+
+class TestSuiteWorkloads:
+    """Tests for suite workload runners (long-context and burst)."""
+    
+    @pytest.mark.asyncio
+    async def test_long_context_workload_runner(self):
+        """Test long-context workload runner."""
+        from monitor.workloads import LongContextWorkloadRunner, WorkloadResult
+        
+        runner = LongContextWorkloadRunner(
+            prompt_tokens=1000,
+            generation_tokens=32
+        )
+        
+        result = await runner.run(18080)
+        
+        assert result.workload_name == "long-context"
+        assert result.total_time >= 0
+        assert result.tokens_per_second >= 0
+        assert result.generated_tokens == 0  # No generation in long-context
+    
+    @pytest.mark.asyncio
+    async def test_burst_workload_runner(self):
+        """Test burst workload runner."""
+        from monitor.workloads import BurstWorkloadRunner, WorkloadResult
+        
+        runner = BurstWorkloadRunner(
+            concurrency=2,
+            tokens_per_request=32
+        )
+        
+        result = await runner.run(18080)
+        
+        assert result.workload_name == "burst"
+        assert result.total_time >= 0
+        assert result.tokens_per_second >= 0
+        assert result.generated_tokens >= 0
+    
+    @pytest.mark.asyncio
+    async def test_workload_result_to_dict(self):
+        """Test WorkloadResult.to_dict() serialization."""
+        from monitor.workloads import WorkloadResult
+        
+        result = WorkloadResult(
+            workload_name="short",
+            total_time=5.0,
+            tokens_per_second=100.0,
+            ttft=0.1,
+            prompt_tokens=64,
+            generated_tokens=512
+        )
+        
+        data = result.to_dict()
+        
+        assert data["workload_name"] == "short"
+        assert data["total_time"] == 5.0
+        assert data["tokens_per_second"] == 100.0
+        assert data["ttft"] == 0.1
+        assert data["prompt_tokens"] == 64
+        assert data["generated_tokens"] == 512
+
+
+class TestSuiteSettings:
+    """Tests for suite settings and standard vs custom tagging."""
+    
+    @pytest.mark.asyncio
+    async def test_suite_parameters_default(self):
+        """Test default suite parameters."""
+        from monitor.benchmarks import BenchmarkRunner
+        
+        runner = BenchmarkRunner()
+        
+        params = runner._get_suite_params({})
+        
+        assert params["short"]["max_tokens"] == 512
+        assert params["long-context"]["prompt_tokens"] == 16384
+        assert params["burst"]["concurrency"] == 4

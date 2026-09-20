@@ -64,7 +64,7 @@ while (processed < MAX_TICKETS) {
     const impl = await agent(
       `Implement issue #${t.number} ("${t.title}") end-to-end per your workflow: ` +
         `bootstrap from AGENTS.md, fetch the ticket and its parent spec, implement test-first, ` +
-        `run the full suite, commit with a clear message. ` +
+        `run the full suite, commit with a clear message and push to the remote. ` +
         `Do NOT close the issue — an independent review comes first.`,
       { label: `code:${t.number}`, agentType: 'coder', phase: `#${t.number}` }
     )
@@ -86,7 +86,7 @@ while (processed < MAX_TICKETS) {
       round++
       await agent(
         `The reviewer found issues in #${t.number}: ${verdict.findings.join(' | ')}. ` +
-          `Address them, run the full suite, commit. Do not close yet.`,
+          `Address them, run the full suite, commit and push. Do not close yet.`,
         { label: `fix:${t.number}-r${round}`, resume: `code:${t.number}`, phase: `#${t.number}` }
       )
       verdict = await agent(
@@ -97,7 +97,7 @@ while (processed < MAX_TICKETS) {
 
     if (verdict?.approved) {
       await agent(
-        `Review approved. Close issue #${t.number} with a concise summary comment: what was built, key decisions, test results.`,
+        `Review approved. Tick the acceptance-criteria checkboxes in the body of issue #${t.number}, then close it with a concise summary comment: what was built, key decisions, test results.`,
         { label: `close:${t.number}`, resume: `code:${t.number}`, phase: `#${t.number}` }
       )
       closed.push(t.number)

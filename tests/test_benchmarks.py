@@ -290,10 +290,11 @@ class TestBenchmarkIntegration:
             assert row["server_port"] == server.port
             assert row["ttft"] == run.ttft
             assert row["peak_gen_tok_s"] == run.peak_gen_tok_s
-            assert "standard" in row["tags"]
+            # max_tokens=64 is a deviation from the 512 default, so tagged as custom
+            assert "custom" in row["tags"]
             params = json.loads(row["workload_params"])
             assert params["max_tokens"] == 64
-            assert row["standard_run"] == 1
+            assert row["standard_run"] == 0  # custom run
             
             # Footprint sampled before/during/after and stored
             for col in ("memory_before", "memory_during", "memory_after", "gpu_before", "gpu_during", "gpu_after"):
@@ -450,38 +451,56 @@ class TestSuiteWorkloads:
     """Tests for suite workload runners (long-context and burst)."""
     
     @pytest.mark.asyncio
-    async def test_long_context_workload_runner(self):
-        """Test long-context workload runner."""
+    async def test_long_context_workload_runner_e2e(self, temp_db_path):
+        """Test long-context workload runner against real HTTP to fake server."""
+        import monitor.store
         from monitor.workloads import LongContextWorkloadRunner, WorkloadResult
+        from tests.fake_llama_server import FakeLLaMAServer
         
-        runner = LongContextWorkloadRunner(
-            prompt_tokens=1000,
-            generation_tokens=32
-        )
+        monitor.store.DB_PATH = temp_db_path
         
-        result = await runner.run(18080)
-        
-        assert result.workload_name == "long-context"
-        assert result.total_time >= 0
-        assert result.tokens_per_second >= 0
-        assert result.generated_tokens == 0  # No generation in long-context
+        async with FakeLLaMAServer(port=18100) as server:
+            await init_db()
+            server.active_requests = 0
+            server.set_streaming_config({"first_chunk_delay_ms": 10, "delay_ms": 5, "tokens_per_chunk": 8})
+            
+            runner = LongContextWorkloadRunner(
+                prompt_tokens=1000,  # Small for testing
+                generation_tokens=32
+            )
+            
+            result = await runner.run(server.port)
+            
+            assert result.workload_name == "long-context"
+            assert result.total_time > 0
+            assert result.tokens_per_second > 0  # Must have real prompt tok/s
+            assert result.generated_tokens > 0  # Server generates tokens during generation phase
     
     @pytest.mark.asyncio
-    async def test_burst_workload_runner(self):
-        """Test burst workload runner."""
+    async def test_burst_workload_runner_e2e(self, temp_db_path):
+        """Test burst workload runner with concurrent requests to fake server."""
+        import monitor.store
         from monitor.workloads import BurstWorkloadRunner, WorkloadResult
+        from tests.fake_llama_server import FakeLLaMAServer
         
-        runner = BurstWorkloadRunner(
-            concurrency=2,
-            tokens_per_request=32
-        )
+        monitor.store.DB_PATH = temp_db_path
         
-        result = await runner.run(18080)
-        
-        assert result.workload_name == "burst"
-        assert result.total_time >= 0
-        assert result.tokens_per_second >= 0
-        assert result.generated_tokens >= 0
+        async with FakeLLaMAServer(port=18101) as server:
+            await init_db()
+            server.active_requests = 0
+            server.set_streaming_config({"first_chunk_delay_ms": 10, "delay_ms": 5, "tokens_per_chunk": 8})
+            
+            runner = BurstWorkloadRunner(
+                concurrency=2,
+                tokens_per_request=32
+            )
+            
+            result = await runner.run(server.port)
+            
+            assert result.workload_name == "burst"
+            assert result.total_time > 0
+            assert result.tokens_per_second > 0  # Must have real aggregate tok/s
+            assert result.generated_tokens > 0
     
     @pytest.mark.asyncio
     async def test_workload_result_to_dict(self):
@@ -522,3 +541,5 @@ class TestSuiteSettings:
         assert params["short"]["max_tokens"] == 512
         assert params["long-context"]["prompt_tokens"] == 16384
         assert params["burst"]["concurrency"] == 4
+
+

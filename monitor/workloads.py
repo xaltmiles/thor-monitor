@@ -6,6 +6,8 @@ import time
 from typing import Dict, Any, Optional, List, Tuple
 import httpx
 
+from .sse_helper import count_tokens_in_sse_chunk
+
 
 class WorkloadResult:
     """Result from a single workload execution."""
@@ -51,11 +53,10 @@ class LongContextWorkloadRunner:
         self,
         prompt_tokens: int = DEFAULT_PROMPT_TOKENS,
         generation_tokens: int = DEFAULT_GENERATION_TOKENS,
-        server_port: Optional[int] = None
+        server_port: Optional[int] = None  # Kept for backward compatibility
     ):
         self.prompt_tokens = prompt_tokens
         self.generation_tokens = generation_tokens
-        self.server_port = server_port
     
     async def run(self, server_port: int) -> WorkloadResult:
         """Run the long-context workload against the server.
@@ -66,8 +67,6 @@ class LongContextWorkloadRunner:
         Returns:
             WorkloadResult with prompt-processing tok/s
         """
-        self.server_port = server_port
-        
         # Create a prompt with approximately prompt_tokens tokens
         # Rough estimate: 1 token ≈ 4 characters
         prompt_char_count = self.prompt_tokens * 4
@@ -85,10 +84,9 @@ class LongContextWorkloadRunner:
             }
             
             ttft = None
+            time_before_first_token = None
             prompt_tokens_processed = 0
             gen_tokens = 0
-            first_token_time = None
-            
             request_start_time = time.time()
             
             try:
@@ -107,23 +105,38 @@ class LongContextWorkloadRunner:
                         except json.JSONDecodeError:
                             continue
                         
-                        # Track TTFT
-                        if ttft is None and chunk.get("choices"):
-                            ttft = time.time() - request_start_time
-                            first_token_time = time.time()
+                        chunk_time = time.time()
                         
-                        # Count tokens in chunk
-                        chunk_tokens = self._count_tokens_in_chunk(chunk)
+                        # First, check for prompt_tokens in usage field (authoritative for total)
+                        usage = chunk.get("usage", {})
+                        if "prompt_tokens" in usage and prompt_tokens_processed == 0:
+                            # This is the first chunk with usage, contains total prompt tokens
+                            prompt_tokens_processed = usage["prompt_tokens"]
+                        
+                        # Track TTFT - first chunk with choices (content) is the first token
+                        if ttft is None and chunk.get("choices"):
+                            ttft = chunk_time - request_start_time
+                            time_before_first_token = ttft
+                        
+                        # Count tokens - use usage field for accuracy
+                        chunk_tokens = count_tokens_in_sse_chunk(chunk)
                         if chunk_tokens > 0:
                             if ttft is not None:
                                 gen_tokens += chunk_tokens
-                            else:
-                                # Before first token, we're processing the prompt
-                                prompt_tokens_processed += chunk_tokens
+                            # Note: prompt_tokens_processed is set above, not from this loop
+                        
+                        # Track time for prompt processing - stops at first content chunk
+                        if ttft is None:
+                            time_before_first_token = chunk_time - request_start_time
                     
                     # Calculate prompt tok/s
                     total_time = time.time() - request_start_time
-                    prompt_tok_s = prompt_tokens_processed / total_time if total_time > 0 else 0
+                    # Use time_before_first_token as the prompt processing duration
+                    actual_prompt_time = time_before_first_token or total_time
+                    # Avoid division by zero
+                    if actual_prompt_time < 0.001:
+                        actual_prompt_time = 0.001
+                    prompt_tok_s = prompt_tokens_processed / actual_prompt_time if prompt_tokens_processed > 0 else 0
                     
                     return WorkloadResult(
                         workload_name="long-context",
@@ -143,26 +156,6 @@ class LongContextWorkloadRunner:
                     prompt_tokens=prompt_tokens_processed,
                     generated_tokens=gen_tokens
                 )
-    
-    def _count_tokens_in_chunk(self, chunk: Dict[str, Any]) -> int:
-        """Count tokens in a chunk from the streaming response."""
-        try:
-            delta = chunk.get("choices", [{}])[0].get("delta", {})
-            if "content" in delta:
-                content = delta["content"]
-                if content and content != "[DONE]":
-                    # Rough token count: 1 token ≈ 4 chars
-                    return len(content) // 4
-        except (IndexError, KeyError):
-            pass
-        
-        # Check usage field
-        usage = chunk.get("usage", {})
-        completion_tokens = usage.get("completion_tokens", 0)
-        if completion_tokens > 0:
-            return completion_tokens
-        
-        return 0
 
 
 class BurstWorkloadRunner:
@@ -175,11 +168,10 @@ class BurstWorkloadRunner:
         self,
         concurrency: int = DEFAULT_CONCURRENCY,
         tokens_per_request: int = DEFAULT_TOKENS_PER_REQUEST,
-        server_port: Optional[int] = None
+        server_port: Optional[int] = None  # Kept for backward compatibility
     ):
         self.concurrency = concurrency
         self.tokens_per_request = tokens_per_request
-        self.server_port = server_port
     
     async def run(self, server_port: int) -> WorkloadResult:
         """Run the burst workload with concurrent requests.
@@ -190,29 +182,19 @@ class BurstWorkloadRunner:
         Returns:
             WorkloadResult with aggregate generation throughput
         """
-        self.server_port = server_port
+        prompt_text = "Write a short story about AI."
         
         async with httpx.AsyncClient(timeout=120.0) as client:
-            # Create concurrent requests
             tasks = [
-                self._run_single_request(client, server_port)
+                self._run_single_request(client, server_port, prompt_text, self.tokens_per_request)
                 for _ in range(self.concurrency)
             ]
             
-            # Run all requests concurrently
-            results: List[Tuple[float, float]] = []  # (time, tokens)
-            for result in await asyncio.gather(*tasks, return_exceptions=True):
-                if isinstance(result, tuple):
-                    results.append(result)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            if not results:
-                return WorkloadResult(
-                    workload_name="burst",
-                    total_time=0,
-                    tokens_per_second=0
-                )
+            valid_results = [r for r in results if isinstance(r, tuple)]
             
-            if not results:
+            if not valid_results:
                 return WorkloadResult(
                     workload_name="burst",
                     total_time=0,
@@ -220,12 +202,12 @@ class BurstWorkloadRunner:
                 )
             
             # Calculate aggregate throughput
-            times = [t for t, _ in results if t is not None]
+            times = [t for t, _, _ in valid_results if t is not None]
             total_time = max(times) if times else 0
-            total_tokens = sum(tokens for _, tokens in results)
+            total_tokens = sum(tokens for _, tokens, _ in valid_results)
             
-            # TTFT is the time to first token across all requests
-            ttft_values = [ttft for ttft, _ in results if ttft is not None]
+            # TTFT is the earliest time to first token across all requests
+            ttft_values = [ttft for _, _, ttft in valid_results if ttft is not None]
             ttft = min(ttft_values) if ttft_values else None
             
             aggregate_tok_s = total_tokens / total_time if total_time > 0 else 0
@@ -241,15 +223,17 @@ class BurstWorkloadRunner:
     async def _run_single_request(
         self,
         client: httpx.AsyncClient,
-        port: int
-    ) -> Tuple[Optional[float], int]:
-        """Run a single request and return (ttft, tokens)."""
+        port: int,
+        prompt_text: str,
+        max_tokens: int
+    ) -> Tuple[float, int, Optional[float]]:
+        """Run a single request and return (elapsed_time, tokens, ttft)."""
         request = {
             "model": "benchmark-model",
             "messages": [
-                {"role": "user", "content": "Write a short story about AI."}
+                {"role": "user", "content": prompt_text}
             ],
-            "max_tokens": self.tokens_per_request,
+            "max_tokens": max_tokens,
             "stream": True
         }
         
@@ -273,33 +257,17 @@ class BurstWorkloadRunner:
                     except json.JSONDecodeError:
                         continue
                     
+                    chunk_time = time.time()
+                    
                     # Track TTFT
                     if ttft is None and chunk.get("choices"):
-                        ttft = time.time() - request_start_time
+                        ttft = chunk_time - request_start_time
                     
                     # Count tokens
-                    chunk_tokens = self._count_tokens_in_chunk(chunk)
-                    tokens_generated += chunk_tokens
+                    tokens_generated += count_tokens_in_sse_chunk(chunk)
                     
         except httpx.RequestError:
             pass
         
-        return ttft, tokens_generated
-    
-    def _count_tokens_in_chunk(self, chunk: Dict[str, Any]) -> int:
-        """Count tokens in a chunk from the streaming response."""
-        try:
-            delta = chunk.get("choices", [{}])[0].get("delta", {})
-            if "content" in delta:
-                content = delta["content"]
-                if content and content != "[DONE]":
-                    return len(content) // 4
-        except (IndexError, KeyError):
-            pass
-        
-        usage = chunk.get("usage", {})
-        completion_tokens = usage.get("completion_tokens", 0)
-        if completion_tokens > 0:
-            return completion_tokens
-        
-        return 0
+        elapsed = time.time() - request_start_time
+        return elapsed, tokens_generated, ttft

@@ -120,6 +120,8 @@ class BenchmarkRunner:
         
         Acquires the lock exactly once, then spawns the run task.
         If a run is already queued/running, returns that run instead.
+        
+        The tag is enforced: deviations from suite defaults make the run custom.
         """
         async with self._lock:
             if self._current_run and self._current_run.state in (
@@ -127,22 +129,44 @@ class BenchmarkRunner:
             ):
                 return self._current_run
             
+            # Determine if this is a standard or custom run by comparing to defaults
+            is_standard = self._is_standard_run(max_tokens, prompt_tokens, tag)
+            enforced_tag = "standard" if is_standard else "custom"
+            
             run = await self._create_run(
                 workload_type=workload_type,
                 max_tokens=max_tokens,
                 prompt_tokens=prompt_tokens,
-                tag=tag,
+                tag=enforced_tag,
             )
             
             workload_params = {
                 "workload_type": workload_type,
                 "max_tokens": max_tokens,
                 "prompt_tokens": prompt_tokens,
-                "tag": tag
+                "tag": enforced_tag
             }
             self._run_task = asyncio.create_task(self._run_benchmark(run, workload_params))
             
             return run
+    
+    def _is_standard_run(self, max_tokens: int, prompt_tokens: int, tag: str) -> bool:
+        """Check if the run uses standard suite parameters.
+        
+        Returns True only if all parameters match defaults AND tag is "standard".
+        """
+        if tag != "standard":
+            return False
+        
+        # Compare to defaults
+        default_short_max = 512
+        default_short_prompt = 64
+        
+        # For now, just check short workload params (other workloads have fixed defaults)
+        if max_tokens != default_short_max or prompt_tokens != default_short_prompt:
+            return False
+        
+        return True
     
     async def start_run(
         self,
@@ -238,6 +262,7 @@ class BenchmarkRunner:
         """Execute the benchmark run logic (queued -> running -> done/aborted).
         
         This is the core async task that runs the benchmark suite.
+        Stores partial results after each workload for progress tracking.
         """
         try:
             # Phase 1: Queue until idle (or timeout)
@@ -317,10 +342,21 @@ class BenchmarkRunner:
             run.total_time = total_time
             run.finished_at = time.time()
             
+            # Final update with results for progress endpoint
+            await update_benchmark_run(run_id=run.run_id, workload_results=results_json)
+            
         except Exception as e:
             run.state = BenchmarkState.ABORTED
             run.abort_reason = f"Unexpected error: {str(e)}"
             run.finished_at = time.time()
+            # Store partial results on abort
+            partial_results = {"error": str(e)}
+            await update_benchmark_run(
+                run_id=run.run_id,
+                state=run.state,
+                abort_reason=run.abort_reason,
+                workload_results=json.dumps(partial_results)
+            )
         finally:
             # Persist final state (done or aborted) with the abort reason if any
             await update_benchmark_run(

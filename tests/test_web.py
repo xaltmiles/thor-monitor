@@ -116,3 +116,37 @@ async def test_api_fixture_telemetry(test_client):
     assert data["gpu_temp"] == 70.0
     assert data["gpu_power"] == 150.0
     assert "processes" in data
+
+
+@pytest.mark.asyncio
+async def test_api_probes_servers(test_client):
+    """Test probe servers endpoint."""
+    response = test_client.get("/api/probes/servers")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert "servers" in data
+    # Should detect at least the fixture servers
+
+
+@pytest.mark.asyncio
+async def test_api_probes_models(test_client):
+    """Test probe models endpoint."""
+    response = test_client.get("/api/probes/models")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert "models" in data
+    # May be empty if no models detected via API
+
+
+@pytest.mark.asyncio
+async def test_api_probes_detect(test_client):
+    """Test full probe detection endpoint."""
+    response = test_client.get("/api/probes/detect")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert "servers" in data
+    assert "models" in data
+    assert "warning" in data

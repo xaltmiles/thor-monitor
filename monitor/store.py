@@ -3,6 +3,7 @@
 import aiosqlite
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Optional
 
 DB_PATH = Path.home() / ".monitor" / "monitor.db"
 
@@ -130,6 +131,106 @@ async def get_telemetry_history(limit=100):
         async with db.execute(
             "SELECT * FROM telemetry_samples ORDER BY timestamp DESC LIMIT ?",
             (limit,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def insert_model(
+    name: str,
+    quant: str = None,
+    context_length: int = None,
+    server_type: str = None,
+    file_size: int = None
+) -> int:
+    """Insert or update a model in the database.
+    
+    Args:
+        name: Model name
+        quant: Quantization type
+        context_length: Context length in tokens
+        server_type: Type of server (ollama, llama-server)
+        file_size: Model file size in bytes
+        
+    Returns:
+        Model ID
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Check if model already exists
+        async with db.execute(
+            "SELECT id FROM models WHERE name = ? AND server_type = ?",
+            (name, server_type)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                # Update existing model
+                await db.execute(
+                    """UPDATE models SET 
+                        quant = ?, context_length = ?, file_size = ?, 
+                        created_at = ? 
+                        WHERE id = ?""",
+                    (quant, context_length, file_size, 
+                     datetime.now(timezone.utc).isoformat(), row[0])
+                )
+                await db.commit()
+                return row[0]
+        
+        # Insert new model
+        await db.execute(
+            """INSERT INTO models 
+                (name, quant, context_length, server_type, file_size, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+            (name, quant, context_length, server_type, file_size,
+             datetime.now(timezone.utc).isoformat())
+        )
+        await db.commit()
+        
+        # Return the inserted ID
+        async with db.execute(
+            "SELECT id FROM models WHERE name = ? AND server_type = ?",
+            (name, server_type)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+
+async def get_loaded_model(server_type: str = None) -> Optional[dict]:
+    """Get the currently loaded model.
+    
+    Args:
+        server_type: Optional server type filter
+        
+    Returns:
+        Model info dict or None if no model loaded
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        
+        if server_type:
+            async with db.execute(
+                "SELECT * FROM models WHERE server_type = ? ORDER BY created_at DESC LIMIT 1",
+                (server_type,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+        else:
+            async with db.execute(
+                "SELECT * FROM models ORDER BY created_at DESC LIMIT 1"
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+
+async def get_all_models() -> list[dict]:
+    """Get all models in the database.
+    
+    Returns:
+        List of model info dicts
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM models ORDER BY created_at DESC"
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]

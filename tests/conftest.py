@@ -83,3 +83,42 @@ def fixture_process_source():
             {"pid": 5678, "name": "llama-server", "rss": 12_000_000_000, "vms": 15_000_000_000, "cmdline": ["llama-server", "--model", "model.gguf"]},
         ]
     )
+
+
+@pytest.fixture
+def fixture_server_info_ollama():
+    """Create fixture ollama server info."""
+    from monitor.probes.interface import ServerInfo
+    return ServerInfo(
+        pid=1234,
+        name="ollama",
+        type="ollama",
+        port=11434,
+        cmdline=["ollama", "serve"]
+    )
+
+
+@pytest.fixture
+def fixture_server_info_llama():
+    """Create fixture llama-server info."""
+    from monitor.probes.interface import ServerInfo
+    return ServerInfo(
+        pid=5678,
+        name="llama-server",
+        type="llama-server",
+        port=8080,
+        cmdline=["llama-server", "--model", "/path/to/model.gguf"]
+    )
+
+
+@pytest.fixture
+def fixture_model_info():
+    """Create fixture model info."""
+    from monitor.probes.interface import ModelInfo
+    return ModelInfo(
+        name="llama3",
+        quant="8b",
+        context_length=8192,
+        file_size=4600000000,
+        server_type="ollama"
+    )

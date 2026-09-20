@@ -85,13 +85,100 @@
             color: #666;
             font-style: italic;
         }
+        
+        /* Warning banner */
+        .warning-banner {
+            background: #4a1a1a;
+            border-left: 4px solid #ff6b6b;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        
+        .warning-banner h3 {
+            color: #ff6b6b;
+            margin-bottom: 5px;
+            font-size: 1em;
+        }
+        
+        .warning-banner p {
+            color: #ffcccc;
+            font-size: 0.9em;
+        }
+        
+        .card-loaded-model .metric-value {
+            color: #00d4ff;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Monitor Dashboard</h1>
         
+        <!-- Warning Banner -->
+        <div id="warning-banner" class="warning-banner" style="display: none;">
+            <h3>⚠️ Warning</h3>
+            <p id="warning-text">Multiple loaded models detected</p>
+        </div>
+        
         <div class="grid">
+            <!-- Loaded Model Card -->
+            <div class="card card-loaded-model">
+                <h2>Loaded Model</h2>
+                <div id="loaded-model-metrics">
+                    <div class="metric">
+                        <span class="metric-label">Name</span>
+                        <span class="metric-value" hx-get="/api/probes/models" hx-trigger="every 5s" hx-swap="none">
+                            {% if models and models.models %}
+                                {{ models.models[0].name }}
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Quant</span>
+                        <span class="metric-value" hx-get="/api/probes/models" hx-trigger="every 5s" hx-swap="none">
+                            {% if models and models.models %}
+                                {{ models.models[0].quant or 'N/A' }}
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Context</span>
+                        <span class="metric-value" hx-get="/api/probes/models" hx-trigger="every 5s" hx-swap="none">
+                            {% if models and models.models and models.models[0].context_length %}
+                                {{ models.models[0].context_length }} tokens
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Size</span>
+                        <span class="metric-value" hx-get="/api/probes/models" hx-trigger="every 5s" hx-swap="none">
+                            {% if models and models.models and models.models[0].file_size %}
+                                {{ (models.models[0].file_size / 1e9) | round(2) }} GB
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Server Type</span>
+                        <span class="metric-value" hx-get="/api/probes/models" hx-trigger="every 5s" hx-swap="none">
+                            {% if models and models.models %}
+                                {{ models.models[0].server_type or 'N/A' }}
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
             <!-- Memory Card -->
             <div class="card">
                 <h2>Unified Memory</h2>
@@ -194,6 +281,35 @@
         document.addEventListener('htmx:configRequest', function(evt) {
             evt.detail.headers['Cache-Control'] = 'no-cache';
         });
+        
+        // Update warning banner from probe data
+        async function checkProbes() {
+            try {
+                const response = await fetch('/api/probes/detect');
+                if (response.ok) {
+                    const data = await response.json();
+                    const banner = document.getElementById('warning-banner');
+                    const warningText = document.getElementById('warning-text');
+                    
+                    if (data.warning) {
+                        warningText.textContent = data.warning;
+                        banner.style.display = 'block';
+                    } else {
+                        banner.style.display = 'none';
+                    }
+                    
+                    // Update loaded model data
+                    if (data.models && data.models.length > 0) {
+                        // Models will be fetched separately
+                    }
+                }
+            } catch (err) {
+                //Silent fail for probe errors
+            }
+        }
+        
+        // Check probes every 5 seconds
+        setInterval(checkProbes, 5000);
     </script>
 </body>
 </html>

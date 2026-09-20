@@ -1,6 +1,7 @@
 """Web module - FastAPI app and routes."""
 
 import asyncio
+import json
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -25,6 +26,19 @@ jinja_env = jinja2.Environment(
     enable_async=True,
 )
 jinja_env.cache = None  # Disable caching
+
+
+def _from_json(value):
+    """Parse a JSON string (e.g. gpu_process_memory from the store)."""
+    if not value:
+        return []
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return []
+
+
+jinja_env.filters["from_json"] = _from_json
 
 
 async def render_template(template_name: str, context: dict):

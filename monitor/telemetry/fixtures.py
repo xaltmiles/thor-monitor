@@ -48,7 +48,7 @@ class FixtureProcessSource(ProcessSource):
         return {"processes": self.processes}
 
 
-class FixtureGPUMemorySource:
+class FixtureGPUMemorySource(GPUMemorySource):
     """Fixture GPU memory source with configurable per-process attribution."""
     
     def __init__(self, processes: list = None):

@@ -10,7 +10,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from monitor.store import init_db
-from monitor.telemetry import RealMemorySource, RealGPUSource, RealProcessSource
+from monitor.telemetry import RealMemorySource, RealGPUSource, RealProcessSource, RealGPUMemorySource
 from monitor.sampler import Sampler
 
 logging.basicConfig(
@@ -32,10 +32,11 @@ async def main():
     memory_source = RealMemorySource()
     gpu_source = RealGPUSource()
     process_source = RealProcessSource()
+    gpu_memory_source = RealGPUMemorySource()
     
     # Create and start sampler
     sampler = Sampler(
-        sources=[memory_source, gpu_source, process_source],
+        sources=[memory_source, gpu_source, process_source, gpu_memory_source],
         interval=1.0  # 1 Hz sampling
     )
     

@@ -38,14 +38,12 @@ class RealGPUSource(GPUSource):
     async def collect(self) -> dict:
         """Collect GPU stats using nvidia-smi."""
         try:
-            loop = asyncio.get_event_loop()
-            proc = await loop.run_in_executor(
-                None,
-                lambda: psutil.Popen(
-                    ["nvidia-smi", "--query-gpu=utilization.gpu,temperature.gpu,power.draw", 
-                     "--format=csv,noheader,nounits"],
-                    stdout=-1, stderr=-1
-                )
+            proc = await asyncio.create_subprocess_exec(
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,temperature.gpu,power.draw",
+                "--format=csv,noheader,nounits",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await proc.communicate()
             
@@ -96,14 +94,12 @@ class RealGPUMemorySource(GPUMemorySource):
     async def collect(self) -> dict:
         """Collect per-process GPU memory using nvidia-smi --query-compute-apps."""
         try:
-            loop = asyncio.get_event_loop()
-            proc = await loop.run_in_executor(
-                None,
-                lambda: psutil.Popen(
-                    ["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", 
-                     "--format=csv,noheader,nounits"],
-                    stdout=-1, stderr=-1
-                )
+            proc = await asyncio.create_subprocess_exec(
+                "nvidia-smi",
+                "--query-compute-apps=pid,process_name,used_memory",
+                "--format=csv,noheader,nounits",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await proc.communicate()
             
@@ -117,7 +113,9 @@ class RealGPUMemorySource(GPUMemorySource):
                             processes.append({
                                 "pid": int(parts[0].strip()),
                                 "name": parts[1].strip(),
-                                "gpu_memory": int(parts[2].strip())
+                                # nvidia-smi nounits reports MiB; store bytes for
+                                # consistency with the rest of the telemetry
+                                "gpu_memory": int(parts[2].strip()) * 1024 * 1024
                             })
                         except (ValueError, IndexError):
                             continue

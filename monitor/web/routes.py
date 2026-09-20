@@ -90,13 +90,13 @@ def create_app():
         warning_gpu_temp = None
         warning_gpu_util = None
         try:
-            import asyncio
             from ..store import get_settings
-            settings = asyncio.get_event_loop().run_until_complete(get_settings())
+            settings = await get_settings()
             if settings:
                 warning_gpu_temp = settings.get("warning_gpu_temp")
                 warning_gpu_util = settings.get("warning_gpu_util")
-        except RuntimeError:
+        except Exception:
+            # If settings can't be loaded, use defaults
             pass
         
         # Check if telemetry exceeds thresholds
@@ -359,17 +359,67 @@ def create_app():
     @app.post("/api/settings")
     async def api_update_settings(request: Request):
         """Update settings."""
-        from ..store import update_settings
+        from ..store import update_settings, DEFAULTS
         
         data = await request.json()
         
+        # Validate sample_rate
+        sample_rate = data.get("sample_rate")
+        if sample_rate is not None:
+            if not isinstance(sample_rate, (int, float)) or sample_rate <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="sample_rate must be a positive number"
+                )
+        
+        # Validate standard_workload_duration
+        standard_workload_duration = data.get("standard_workload_duration")
+        if standard_workload_duration is not None:
+            if not isinstance(standard_workload_duration, (int, float)) or standard_workload_duration <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="standard_workload_duration must be a positive number"
+                )
+        
+        # Validate max_queue_wait
+        max_queue_wait = data.get("max_queue_wait")
+        if max_queue_wait is not None:
+            if not isinstance(max_queue_wait, (int, float)) or max_queue_wait <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="max_queue_wait must be a positive number"
+                )
+        
+        # Validate warning_gpu_temp
+        warning_gpu_temp = data.get("warning_gpu_temp")
+        if warning_gpu_temp is not None:
+            if not isinstance(warning_gpu_temp, (int, float)) or warning_gpu_temp < 0 or warning_gpu_temp > 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail="warning_gpu_temp must be a number between 0 and 200"
+                )
+        
+        # Validate warning_gpu_util
+        warning_gpu_util = data.get("warning_gpu_util")
+        if warning_gpu_util is not None:
+            if not isinstance(warning_gpu_util, (int, float)) or warning_gpu_util < 0 or warning_gpu_util > 100:
+                raise HTTPException(
+                    status_code=400,
+                    detail="warning_gpu_util must be a number between 0 and 100"
+                )
+        
         settings = await update_settings(
-            sample_rate=data.get("sample_rate"),
-            standard_workload_duration=data.get("standard_workload_duration"),
-            max_queue_wait=data.get("max_queue_wait"),
-            warning_gpu_temp=data.get("warning_gpu_temp"),
-            warning_gpu_util=data.get("warning_gpu_util")
+            sample_rate=sample_rate,
+            standard_workload_duration=standard_workload_duration,
+            max_queue_wait=max_queue_wait,
+            warning_gpu_temp=warning_gpu_temp,
+            warning_gpu_util=warning_gpu_util
         )
+        
+        # Update sampler interval if sample_rate changed
+        if "sample_rate" in data and hasattr(app.state, "sampler"):
+            new_interval = 1.0 / sample_rate
+            app.state.sampler.set_interval(new_interval)
         
         return settings
     
@@ -380,9 +430,8 @@ def create_app():
         
         # Get current settings for initial render
         try:
-            import asyncio
-            settings = asyncio.get_event_loop().run_until_complete(get_settings())
-        except RuntimeError:
+            settings = await get_settings()
+        except Exception:
             settings = None
         
         content = await render_template("settings.html", {

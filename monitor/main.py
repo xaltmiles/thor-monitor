@@ -40,7 +40,8 @@ async def main():
     # Get sample rate from settings
     from .store import get_settings
     settings = await get_settings()
-    sample_rate = settings["sample_rate"] if settings else 1
+    # init_db always inserts the default row, so settings should never be None
+    sample_rate = settings["sample_rate"]
     sampler_interval = 1.0 / sample_rate
     
     # Create and start sampler

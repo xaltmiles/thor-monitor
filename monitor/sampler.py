@@ -30,6 +30,10 @@ class Sampler:
         self._running = False
         self._task = None
     
+    def set_interval(self, interval: float):
+        """Update the collection interval. Takes effect on the next iteration."""
+        self.interval = interval
+    
     async def start(self):
         """Start the sampler loop."""
         self._running = True

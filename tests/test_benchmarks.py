@@ -531,17 +531,25 @@ class TestSuiteSettings:
     """Tests for suite settings and standard vs custom tagging."""
     
     @pytest.mark.asyncio
-    async def test_suite_parameters_default(self):
+    async def test_suite_parameters_default(self, temp_db_path):
         """Test default suite parameters."""
-        from monitor.benchmarks import BenchmarkRunner
-        
-        runner = BenchmarkRunner()
-        
-        params = runner._get_suite_params({})
-        
-        assert params["short"]["max_tokens"] == 512
-        assert params["long-context"]["prompt_tokens"] == 16384
-        assert params["burst"]["concurrency"] == 4
+        import monitor.store
+        original_path = monitor.store.DB_PATH
+        monitor.store.DB_PATH = temp_db_path
+        try:
+            await init_db()
+            
+            from monitor.benchmarks import BenchmarkRunner
+            
+            runner = BenchmarkRunner()
+            
+            params = await runner._get_suite_params({})
+            
+            assert params["short"]["max_tokens"] == 512
+            assert params["long-context"]["prompt_tokens"] == 16384
+            assert params["burst"]["concurrency"] == 4
+        finally:
+            monitor.store.DB_PATH = original_path
 
 
 
@@ -592,7 +600,7 @@ class TestSuiteSettings:
                 stored = _json.loads(row["workload_results"])
                 assert name in stored, f"workload {name} not visible in store immediately after completion"
 
-            suite_params = runner._get_suite_params({"max_tokens": 32})
+            suite_params = await runner._get_suite_params({"max_tokens": 32})
             results = await runner._run_suite(server.port, suite_params, on_result=on_result)
 
             # All three workloads ran, callback fired once per workload in order

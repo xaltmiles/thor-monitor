@@ -103,27 +103,27 @@ class BenchmarkRunner:
         self._gpu_source = RealGPUSource()
         self._gpu_memory_source = RealGPUMemorySource()
         
-        # Initialize with current settings if not provided and not in async context
+        # Initialize with current settings if not provided
+        # This is called during app creation (sync context), so we need to handle both cases
         if self.max_queue_wait is None:
-            self._apply_default_settings()
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # In async context (e.g., tests) - await the coroutine
+                    asyncio.create_task(self._apply_default_settings_async())
+                else:
+                    # Sync context - run until complete
+                    loop.run_until_complete(self._apply_default_settings_async())
+            except RuntimeError:
+                # No event loop - create a new one
+                asyncio.run(self._apply_default_settings_async())
     
-    def _apply_default_settings(self):
-        """Apply default settings from store. Runs synchronously."""
-        import asyncio
+    async def _apply_default_settings_async(self):
+        """Apply default settings from store asynchronously."""
         from .store import get_settings, DEFAULTS
         
-        # Try to get settings from store
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # In async context, can't run synchronously - use default
-                return
-        except RuntimeError:
-            pass
-        
-        # Run async function synchronously
-        try:
-            settings = asyncio.run(get_settings())
+            settings = await get_settings()
             if settings and "max_queue_wait" in settings:
                 self.max_queue_wait = settings["max_queue_wait"]
             else:
@@ -173,7 +173,7 @@ class BenchmarkRunner:
                 return self._current_run
             
             # Determine if this is a standard or custom run by comparing to defaults
-            is_standard = self._is_standard_run(max_tokens, prompt_tokens, tag)
+            is_standard = await self._is_standard_run(max_tokens, prompt_tokens, tag)
             enforced_tag = "standard" if is_standard else "custom"
             
             run = await self._create_run(
@@ -193,7 +193,7 @@ class BenchmarkRunner:
             
             return run
     
-    def _is_standard_run(self, max_tokens: int, prompt_tokens: int, tag: str) -> bool:
+    async def _is_standard_run(self, max_tokens: int, prompt_tokens: int, tag: str) -> bool:
         """Check if the run uses standard suite parameters.
         
         Returns True only if all parameters match defaults AND tag is "standard".
@@ -201,26 +201,8 @@ class BenchmarkRunner:
         if tag != "standard":
             return False
         
-        # Get standard_workload_duration from settings for max_tokens comparison
-        # Read settings synchronously - try multiple approaches
-        import asyncio
-        settings = None
-        try:
-            # Try to run the coroutine synchronously
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # In async context - create a new task
-                task = loop.create_task(get_settings())
-                settings = loop.run_until_complete(task)
-            else:
-                # Loop not running - run until complete
-                settings = loop.run_until_complete(get_settings())
-        except (RuntimeError, AttributeError):
-            # No event loop - create a new one
-            try:
-                settings = asyncio.run(get_settings())
-            except Exception:
-                settings = None
+        # Get settings asynchronously
+        settings = await get_settings()
         
         # Determine short workload max_tokens from settings or default
         if settings and "standard_workload_duration" in settings:
@@ -365,7 +347,7 @@ class BenchmarkRunner:
             footprint_before = await self._sample_footprint()
             
             # Load suite settings and run workloads
-            suite_params = self._get_suite_params(workload_params)
+            suite_params = await self._get_suite_params(workload_params)
             workload_results = await self._run_suite(
                 run.server_port,
                 suite_params,
@@ -625,20 +607,15 @@ class BenchmarkRunner:
         
         return 0
     
-    def _get_suite_params(self, workload_params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_suite_params(self, workload_params: Dict[str, Any]) -> Dict[str, Any]:
         """Get suite parameters, merging workload_params with defaults.
         
         Reads standard_workload_duration from settings to determine short
         workload max_tokens for standard runs. Uses ~50 tok/s to convert
         duration (seconds) to max_tokens.
         """
-        # Get current settings
-        try:
-            import asyncio
-            settings = asyncio.get_event_loop().run_until_complete(get_settings())
-        except RuntimeError:
-            # No event loop (e.g., during import)
-            settings = None
+        # Get current settings asynchronously
+        settings = await get_settings()
         
         # Determine short workload max_tokens from settings or default
         if settings and "standard_workload_duration" in settings:

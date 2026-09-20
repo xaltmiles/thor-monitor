@@ -28,7 +28,7 @@ class SessionTracker:
     
     IDLE_TIMEOUT = 30.0  # seconds of inactivity before a session closes
     
-    def __init__(self, model_name: str = "llama-server", idle_timeout: float = None):
+    def __init__(self, model_name: str = None, idle_timeout: float = None):
         self.model_name = model_name
         self.idle_timeout = idle_timeout if idle_timeout is not None else self.IDLE_TIMEOUT
         self._session_id: Optional[int] = None
@@ -43,7 +43,8 @@ class SessionTracker:
         Args:
             stats: dict from the stats source with cumulative counters and *_rate keys;
                 None when no stats available. For llama-server, keys are
-                generated_tokens_rate, prompt_tokens_rate. For ollama, same keys.
+                generated_tokens_rate, prompt_tokens_rate. For ollama, same keys
+                (or ollama_generated_tokens_rate, ollama_prompt_tokens_rate).
             server_type: "llama-server" or "ollama"
         """
         now = time.monotonic()
@@ -52,8 +53,9 @@ class SessionTracker:
             await self._maybe_close(now)
             return
         
-        gen_rate = stats.get("generated_tokens_rate") or 0
-        prompt_rate = stats.get("prompt_tokens_rate") or 0
+        # Check for ollama stats first (namespaced keys), then llama stats
+        gen_rate = stats.get("ollama_generated_tokens_rate") or stats.get("generated_tokens_rate") or 0
+        prompt_rate = stats.get("ollama_prompt_tokens_rate") or stats.get("prompt_tokens_rate") or 0
         active = (gen_rate + prompt_rate) > 0
         
         if active:

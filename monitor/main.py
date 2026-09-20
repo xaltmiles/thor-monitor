@@ -10,7 +10,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from monitor.store import init_db
-from monitor.telemetry import RealMemorySource, RealGPUSource, RealProcessSource, RealGPUMemorySource, RealLLaMAStatsSource
+from monitor.telemetry import RealMemorySource, RealGPUSource, RealProcessSource, RealGPUMemorySource, RealLLaMAStatsSource, RealOllamaStatsSource
 from monitor.sampler import Sampler
 from monitor.sessions import SessionTracker
 
@@ -35,10 +35,11 @@ async def main():
     process_source = RealProcessSource()
     gpu_memory_source = RealGPUMemorySource()
     llama_stats_source = RealLLaMAStatsSource()  # discovers the llama-server via probes
+    ollama_stats_source = RealOllamaStatsSource()  # discovers ollama logs
     
     # Create and start sampler
     sampler = Sampler(
-        sources=[memory_source, gpu_source, process_source, gpu_memory_source, llama_stats_source],
+        sources=[memory_source, gpu_source, process_source, gpu_memory_source, llama_stats_source, ollama_stats_source],
         interval=1.0,  # 1 Hz sampling
         session_tracker=SessionTracker(),
     )

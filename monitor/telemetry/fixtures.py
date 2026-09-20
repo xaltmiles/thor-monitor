@@ -91,7 +91,11 @@ class FixtureLLaMAStatsSource(LLaMAStatsSource):
 
 
 class FixtureOllamaStatsSource:
-    """Fixture Ollama stats source with configurable values."""
+    """Fixture Ollama stats source with configurable values.
+    
+    Note: Keys are namespaced (ollama_prompt_tokens, etc.) to avoid
+    collision with llama_stats when FixtureTelemetrySource.collect() merges them.
+    """
     
     def __init__(
         self,
@@ -100,18 +104,18 @@ class FixtureOllamaStatsSource:
         prompt_tokens_rate: float = 0.0,
         generated_tokens_rate: float = 0.0
     ):
-        self.prompt_tokens = prompt_tokens
-        self.generated_tokens = generated_tokens
-        self.prompt_tokens_rate = prompt_tokens_rate
-        self.generated_tokens_rate = generated_tokens_rate
+        self._prompt_tokens = prompt_tokens
+        self._generated_tokens = generated_tokens
+        self._prompt_tokens_rate = prompt_tokens_rate
+        self._generated_tokens_rate = generated_tokens_rate
     
     async def collect(self) -> dict:
-        """Return fixture Ollama stats data."""
+        """Return fixture Ollama stats data with namespaced keys."""
         return {
-            "prompt_tokens": self.prompt_tokens,
-            "generated_tokens": self.generated_tokens,
-            "prompt_tokens_rate": self.prompt_tokens_rate,
-            "generated_tokens_rate": self.generated_tokens_rate
+            "ollama_prompt_tokens": self._prompt_tokens,
+            "ollama_generated_tokens": self._generated_tokens,
+            "ollama_prompt_tokens_rate": self._prompt_tokens_rate,
+            "ollama_generated_tokens_rate": self._generated_tokens_rate
         }
 
 
@@ -143,11 +147,21 @@ class FixtureTelemetrySource:
         ollama_stats = await self.ollama_stats_source.collect()
         process = await self.process_source.collect()
         
+        # Namespace ollama stats to avoid key collision with llama_stats
+        # The database only has llama_stats column, so we store both
+        # in the same field with namespaced keys
+        ollama_stats_namespaced = {}
+        for key, value in ollama_stats.items():
+            if key in ("prompt_tokens", "generated_tokens", "prompt_tokens_rate", "generated_tokens_rate"):
+                ollama_stats_namespaced[f"ollama_{key}"] = value
+            else:
+                ollama_stats_namespaced[key] = value
+        
         return {
             **memory,
             **gpu,
             **gpu_memory,
             **llama_stats,
-            **ollama_stats,
+            **ollama_stats_namespaced,
             **process
         }

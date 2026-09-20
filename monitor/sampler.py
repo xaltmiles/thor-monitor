@@ -56,8 +56,26 @@ class Sampler:
                 sample = await self._collect_sample()
                 await insert_telemetry_sample(**sample)
                 if self.session_tracker is not None:
-                    stats = sample.get("llama_stats")
-                    await self.session_tracker.observe(json.loads(stats) if stats else None)
+                    # Check both llama_stats and ollama_stats for ollama detection
+                    llama_stats = sample.get("llama_stats")
+                    ollama_stats = sample.get("ollama_stats")
+                    
+                    parsed_llama_stats = json.loads(llama_stats) if llama_stats else None
+                    parsed_ollama_stats = json.loads(ollama_stats) if ollama_stats else None
+                    
+                    # Determine server_type based on which stats are present
+                    if parsed_ollama_stats and (
+                        "ollama_prompt_tokens" in parsed_ollama_stats or
+                        "ollama_prompt_tokens_rate" in parsed_ollama_stats
+                    ):
+                        server_type = "ollama"
+                        await self.session_tracker.observe(parsed_ollama_stats, server_type=server_type)
+                    elif parsed_llama_stats and (
+                        "prompt_tokens" in parsed_llama_stats or
+                        "prompt_tokens_rate" in parsed_llama_stats
+                    ):
+                        server_type = "llama-server"
+                        await self.session_tracker.observe(parsed_llama_stats, server_type=server_type)
             except Exception as e:
                 logger.error(f"Error collecting sample: {e}")
             
@@ -80,8 +98,15 @@ class Sampler:
                 elif "gpu_processes" in data:
                     sample["gpu_process_memory"] = json.dumps(data["gpu_processes"])
                 # Map LLaMA stats to llama_stats for db storage
-                elif "prompt_tokens" in data or "generated_tokens_rate" in data:
+                # Check for llama-specific keys (without ollama_ prefix) to avoid collision
+                elif "prompt_tokens" in data and "ollama_prompt_tokens" not in data:
                     sample["llama_stats"] = json.dumps(data)
+                # Also match if we have generated_tokens_rate but not ollama version
+                elif "generated_tokens_rate" in data and "ollama_generated_tokens_rate" not in data:
+                    sample["llama_stats"] = json.dumps(data)
+                # Map Ollama stats to ollama_stats for db storage
+                elif "ollama_prompt_tokens" in data or "ollama_prompt_tokens_rate" in data:
+                    sample["ollama_stats"] = json.dumps(data)
                 else:
                     sample.update(data)
             except Exception as e:

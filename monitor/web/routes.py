@@ -120,6 +120,7 @@ def create_app():
         return {
             "models": [m.__dict__ for m in result.models],
             "warning": result.warning,
+            "ollama_guidance": result.ollama_guidance,
         }
     
     @app.get("/api/probes/detect")
@@ -129,7 +130,8 @@ def create_app():
         return {
             "servers": [s.__dict__ for s in result.servers],
             "models": [m.__dict__ for m in result.models],
-            "warning": result.warning
+            "warning": result.warning,
+            "ollama_guidance": result.ollama_guidance
         }
     
     @app.get("/api/fixtures/probes")

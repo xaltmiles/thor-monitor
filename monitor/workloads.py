@@ -19,7 +19,8 @@ class WorkloadResult:
         tokens_per_second: float,
         ttft: Optional[float] = None,
         prompt_tokens: int = 0,
-        generated_tokens: int = 0
+        generated_tokens: int = 0,
+        model_name: Optional[str] = None
     ):
         self.workload_name = workload_name
         self.total_time = total_time
@@ -27,6 +28,7 @@ class WorkloadResult:
         self.ttft = ttft
         self.prompt_tokens = prompt_tokens
         self.generated_tokens = generated_tokens
+        self.model_name = model_name
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage."""
@@ -37,6 +39,7 @@ class WorkloadResult:
             "ttft": self.ttft,
             "prompt_tokens": self.prompt_tokens,
             "generated_tokens": self.generated_tokens,
+            "model_name": self.model_name,
         }
 
 
@@ -293,10 +296,12 @@ class OllamaShortWorkloadRunner:
     def __init__(
         self,
         max_tokens: int = DEFAULT_MAX_TOKENS,
-        prompt_tokens: int = DEFAULT_PROMPT_TOKENS
+        prompt_tokens: int = DEFAULT_PROMPT_TOKENS,
+        model_name: str = None
     ):
         self.max_tokens = max_tokens
         self.prompt_tokens = prompt_tokens
+        self.model_name = model_name
     
     async def run(self, port: int) -> WorkloadResult:
         """Run the short workload against ollama's /api/generate endpoint.
@@ -307,6 +312,9 @@ class OllamaShortWorkloadRunner:
         Returns:
             WorkloadResult with peak generation tok/s and TTFT
         """
+        # Use detected model name or fall back to default
+        model = self.model_name or "benchmark-ollama-model"
+        
         # Create a prompt with approximately prompt_tokens tokens
         # Rough estimate: 1 token ≈ 4 characters
         prompt_char_count = self.prompt_tokens * 4
@@ -316,7 +324,7 @@ class OllamaShortWorkloadRunner:
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Ollama generate endpoint uses "prompt" instead of "messages"
             request = {
-                "model": "benchmark-ollama-model",
+                "model": model,
                 "prompt": prompt_text,
                 "stream": True,
                 "options": {
@@ -386,7 +394,8 @@ class OllamaShortWorkloadRunner:
                         total_time=total_time,
                         tokens_per_second=peak_gen_tok_s,
                         ttft=ttft,
-                        generated_tokens=tokens_generated
+                        generated_tokens=tokens_generated,
+                        model_name=self.model_name
                     )
                     
             except httpx.RequestError:
@@ -396,7 +405,8 @@ class OllamaShortWorkloadRunner:
                     total_time=total_time,
                     tokens_per_second=0,
                     ttft=None,
-                    generated_tokens=tokens_generated
+                    generated_tokens=tokens_generated,
+                    model_name=self.model_name
                 )
 
 
@@ -412,10 +422,12 @@ class OllamaLongContextWorkloadRunner:
     def __init__(
         self,
         prompt_tokens: int = DEFAULT_PROMPT_TOKENS,
-        generation_tokens: int = DEFAULT_GENERATION_TOKENS
+        generation_tokens: int = DEFAULT_GENERATION_TOKENS,
+        model_name: str = None
     ):
         self.prompt_tokens = prompt_tokens
         self.generation_tokens = generation_tokens
+        self.model_name = model_name
     
     async def run(self, port: int) -> WorkloadResult:
         """Run the long-context workload against ollama's /api/generate endpoint.
@@ -426,6 +438,9 @@ class OllamaLongContextWorkloadRunner:
         Returns:
             WorkloadResult with prompt-processing tok/s
         """
+        # Use detected model name or fall back to default
+        model = self.model_name or "benchmark-ollama-model"
+        
         # Create a prompt with approximately prompt_tokens tokens
         prompt_char_count = self.prompt_tokens * 4
         prompt_text = "The quick brown fox jumps over the lazy dog. " * (prompt_char_count // 64)
@@ -433,7 +448,7 @@ class OllamaLongContextWorkloadRunner:
         
         async with httpx.AsyncClient(timeout=120.0) as client:
             request = {
-                "model": "benchmark-ollama-model",
+                "model": model,
                 "prompt": prompt_text,
                 "stream": True,
                 "options": {
@@ -442,7 +457,6 @@ class OllamaLongContextWorkloadRunner:
             }
             
             ttft = None
-            time_before_first_token = None
             request_start_time = time.time()
             tokens_generated = 0
             
@@ -490,7 +504,8 @@ class OllamaLongContextWorkloadRunner:
                         tokens_per_second=prompt_tok_s,
                         ttft=ttft,
                         prompt_tokens=self.prompt_tokens,
-                        generated_tokens=tokens_generated
+                        generated_tokens=tokens_generated,
+                        model_name=self.model_name
                     )
                     
             except httpx.RequestError:
@@ -501,7 +516,8 @@ class OllamaLongContextWorkloadRunner:
                     tokens_per_second=0,
                     ttft=None,
                     prompt_tokens=self.prompt_tokens,
-                    generated_tokens=tokens_generated
+                    generated_tokens=tokens_generated,
+                    model_name=self.model_name
                 )
 
 
@@ -517,10 +533,12 @@ class OllamaBurstWorkloadRunner:
     def __init__(
         self,
         concurrency: int = DEFAULT_CONCURRENCY,
-        tokens_per_request: int = DEFAULT_TOKENS_PER_REQUEST
+        tokens_per_request: int = DEFAULT_TOKENS_PER_REQUEST,
+        model_name: str = None
     ):
         self.concurrency = concurrency
         self.tokens_per_request = tokens_per_request
+        self.model_name = model_name
     
     async def run(self, port: int) -> WorkloadResult:
         """Run the burst workload with concurrent ollama requests.
@@ -531,24 +549,19 @@ class OllamaBurstWorkloadRunner:
         Returns:
             WorkloadResult with aggregate generation throughput
         """
+        # Use detected model name or fall back to default
+        model = self.model_name or "benchmark-ollama-model"
+        
         prompt_text = "Write a short story about AI."
         
         async with httpx.AsyncClient(timeout=120.0) as client:
             tasks = [
-                self._run_single_request(client, port, prompt_text, self.tokens_per_request)
+                self._run_single_request(client, port, prompt_text, self.tokens_per_request, model)
                 for _ in range(self.concurrency)
             ]
             
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            
             valid_results = [r for r in results if isinstance(r, tuple)]
-            
-            if not valid_results:
-                return WorkloadResult(
-                    workload_name="burst",
-                    total_time=0,
-                    tokens_per_second=0
-                )
             
             times = [t for t, _, _ in valid_results if t is not None]
             total_time = max(times) if times else 0
@@ -565,7 +578,8 @@ class OllamaBurstWorkloadRunner:
                 total_time=total_time,
                 tokens_per_second=aggregate_tok_s,
                 ttft=ttft,
-                generated_tokens=total_tokens
+                generated_tokens=total_tokens,
+                model_name=self.model_name
             )
     
     async def _run_single_request(
@@ -573,11 +587,12 @@ class OllamaBurstWorkloadRunner:
         client: httpx.AsyncClient,
         port: int,
         prompt_text: str,
-        max_tokens: int
+        max_tokens: int,
+        model: str
     ) -> Tuple[float, int, Optional[float]]:
         """Run a single ollama request and return (elapsed_time, tokens, ttft)."""
         request = {
-            "model": "benchmark-ollama-model",
+            "model": model,
             "prompt": prompt_text,
             "stream": True,
             "options": {

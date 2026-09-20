@@ -300,6 +300,7 @@ class BenchmarkRunner:
             workload_results = await self._run_suite(
                 run.server_port,
                 suite_params,
+                model_name=run.model_name,
                 on_result=self._make_progress_writer(run.run_id),
             )
             
@@ -386,9 +387,15 @@ class BenchmarkRunner:
     async def _queue_until_idle(self, run: BenchmarkRun) -> None:
         """Wait until server has no active requests or timeout.
         
-        Polls the llamacpp:requests_processing gauge every queue_poll_interval.
-        Times out at max_queue_wait seconds.
+        For llama-server: Polls the llamacpp:requests_processing gauge every queue_poll_interval.
+        For ollama: Skip this check (ollama doesn't provide active request metrics).
+        Times out at max_queue_wait seconds (for llama-server).
         """
+        # Ollama servers don't provide active request metrics via /metrics endpoint
+        # Skip the queue-until-idle check for ollama
+        if run.server_type == "ollama":
+            return
+        
         start_time = time.time()
         
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -577,11 +584,15 @@ class BenchmarkRunner:
         self,
         server_port: int,
         suite_params: Dict[str, Dict[str, Any]],
+        model_name: str = None,
         on_result=None,
     ) -> Dict[str, WorkloadResult]:
         """Run all workloads in the suite and return results.
         
         Args:
+            server_port: Port of the server to benchmark
+            suite_params: Suite configuration parameters
+            model_name: Name of the detected model (used for ollama runners)
             on_result: Optional async callback(name, snapshot) invoked after each
                 workload completes, so progress is visible mid-run (the progress
                 endpoint reads these partial results from the store).
@@ -595,11 +606,10 @@ class BenchmarkRunner:
         
         # Detect server type from current run (set during _create_run)
         # Default to llama-server if not set (backward compatibility)
-        server_type = getattr(self, "_current_run", None)
-        server_type = server_type.server_type if server_type else "llama-server"
+        server_type = self._current_run.server_type if self._current_run else "llama-server"
         
         # Run short workload (select runner based on server type)
-        short_runner = self._make_short_runner(suite_params.get("short", {}), server_type)
+        short_runner = self._make_short_runner(suite_params.get("short", {}), server_type, model_name)
         await _record("short", await short_runner.run(server_port))
         
         # Run long-context workload (select runner based on server type)
@@ -607,7 +617,8 @@ class BenchmarkRunner:
             suite_params["long-context"]["prompt_tokens"],
             suite_params["long-context"]["max_tokens"],
             server_port,
-            server_type
+            server_type,
+            model_name
         )
         await _record("long-context", await long_context_runner.run(server_port))
         
@@ -616,7 +627,8 @@ class BenchmarkRunner:
             suite_params["burst"]["concurrency"],
             suite_params["burst"]["tokens_per_request"],
             server_port,
-            server_type
+            server_type,
+            model_name
         )
         await _record("burst", await burst_runner.run(server_port))
         
@@ -634,12 +646,19 @@ class BenchmarkRunner:
             )
         return _write
     
-    def _make_short_runner(self, params: Dict[str, Any], server_type: str = "llama-server"):
-        """Create a short workload runner based on server type."""
+    def _make_short_runner(self, params: Dict[str, Any], server_type: str = "llama-server", model_name: str = None):
+        """Create a short workload runner based on server type.
+        
+        Args:
+            params: Runner parameters (max_tokens, prompt_tokens)
+            server_type: "llama-server" or "ollama"
+            model_name: Model name to use (for ollama runners)
+        """
         if server_type == "ollama":
             return OllamaShortWorkloadRunner(
                 max_tokens=params.get("max_tokens", 512),
-                prompt_tokens=params.get("prompt_tokens", 64)
+                prompt_tokens=params.get("prompt_tokens", 64),
+                model_name=model_name
             )
         else:
             return ShortWorkloadRunner(
@@ -652,13 +671,23 @@ class BenchmarkRunner:
         prompt_tokens: int,
         generation_tokens: int,
         server_port: int,
-        server_type: str = "llama-server"
+        server_type: str = "llama-server",
+        model_name: str = None
     ):
-        """Create a long-context workload runner based on server type."""
+        """Create a long-context workload runner based on server type.
+        
+        Args:
+            prompt_tokens: Number of prompt tokens
+            generation_tokens: Number of generation tokens
+            server_port: Server port
+            server_type: "llama-server" or "ollama"
+            model_name: Model name to use (for ollama runners)
+        """
         if server_type == "ollama":
             return OllamaLongContextWorkloadRunner(
                 prompt_tokens=prompt_tokens,
-                generation_tokens=generation_tokens
+                generation_tokens=generation_tokens,
+                model_name=model_name
             )
         else:
             return LongContextWorkloadRunner(
@@ -672,13 +701,23 @@ class BenchmarkRunner:
         concurrency: int,
         tokens_per_request: int,
         server_port: int,
-        server_type: str = "llama-server"
+        server_type: str = "llama-server",
+        model_name: str = None
     ):
-        """Create a burst workload runner based on server type."""
+        """Create a burst workload runner based on server type.
+        
+        Args:
+            concurrency: Number of concurrent requests
+            tokens_per_request: Tokens per request
+            server_port: Server port
+            server_type: "llama-server" or "ollama"
+            model_name: Model name to use (for ollama runners)
+        """
         if server_type == "ollama":
             return OllamaBurstWorkloadRunner(
                 concurrency=concurrency,
-                tokens_per_request=tokens_per_request
+                tokens_per_request=tokens_per_request,
+                model_name=model_name
             )
         else:
             return BurstWorkloadRunner(

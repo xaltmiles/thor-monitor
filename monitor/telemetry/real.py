@@ -5,7 +5,7 @@ import re
 from typing import Any
 import psutil
 import httpx
-from .interface import MemorySource, GPUSource, ProcessSource, GPUMemorySource, LLaMAStatsSource
+from .interface import MemorySource, GPUSource, ProcessSource, GPUMemorySource, LLaMAStatsSource, OllamaStatsSource
 from ..probes.server import ServerDetectorImpl
 
 
@@ -233,3 +233,109 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
             counters[key] = int(float(match.group(1))) if match else 0
         
         return counters
+
+
+class RealOllamaStatsSource(OllamaStatsSource):
+    """Collect ollama stats from debug logs.
+    
+    Ollama logs tokens in the format:
+    llama_new_context: n_tokens = 64
+    llama_sample: token=1234, prob=0.1234, logits=...
+    
+    We parse log files for prompt tokens (n_tokens) and generated tokens
+    (counted from log entries with token data).
+    """
+    
+    # Default paths where ollama debug logs may be located
+    LOG_PATHS = [
+        "/var/log/ollama.log",
+        "/var/log/ollama/ollama.log",
+        "/var/log/services/ollama.log",
+    ]
+    
+    def __init__(self, log_path: str = None):
+        self._log_path = log_path
+        self._last_prompt_tokens = 0
+        self._last_generated_tokens = 0
+    
+    async def collect(self) -> dict:
+        """Collect ollama stats from debug logs.
+        
+        Returns:
+            dict with namespaced keys: ollama_prompt_tokens, ollama_generated_tokens,
+            ollama_prompt_tokens_rate, ollama_generated_tokens_rate
+            Each value is the cumulative counter value
+        """
+        prompt_tokens = 0
+        generated_tokens = 0
+        
+        # Try to find a valid log path
+        log_path = self._log_path
+        if not log_path:
+            for path in self.LOG_PATHS:
+                try:
+                    if await asyncio.to_thread(lambda p=path: __import__('os').path.exists(p)):
+                        log_path = path
+                        break
+                except Exception:
+                    continue
+        
+        if not log_path:
+            return self._empty()
+        
+        try:
+            # Read log file (limit to last 10000 lines to avoid unbounded growth)
+            content = await asyncio.to_thread(self._read_log_file, log_path)
+            
+            # Parse prompt tokens from llama_new_context lines
+            prompt_pattern = r'llama_new_context: n_tokens\s*=\s*(\d+)'
+            prompt_matches = re.findall(prompt_pattern, content)
+            if prompt_matches:
+                # Use the last value (most recent context)
+                prompt_tokens = int(prompt_matches[-1])
+            
+            # Parse generated tokens from log entries
+            # Ollama logs each generated token in the format:
+            # 2024/01/01 12:00:00 llama_token = 1234
+            gen_pattern = r'llama_token\s*=\s*(\d+)'
+            gen_matches = re.findall(gen_pattern, content)
+            generated_tokens = len(gen_matches)
+            
+        except Exception:
+            # If we can't read the log, return zeros
+            pass
+        
+        # Compute rates by differencing against previous sample
+        prompt_rate = max(0, prompt_tokens - self._last_prompt_tokens)
+        gen_rate = max(0, generated_tokens - self._last_generated_tokens)
+        
+        # Update last values for next sample
+        self._last_prompt_tokens = prompt_tokens
+        self._last_generated_tokens = generated_tokens
+        
+        return {
+            "ollama_prompt_tokens": prompt_tokens,
+            "ollama_generated_tokens": generated_tokens,
+            "ollama_prompt_tokens_rate": prompt_rate,
+            "ollama_generated_tokens_rate": gen_rate,
+        }
+    
+    def _read_log_file(self, log_path: str) -> str:
+        """Read and return log file contents.
+        
+        Reads the last 10000 lines to avoid unbounded growth over long-running servers.
+        """
+        with open(log_path, 'r') as f:
+            # Read last 10000 lines to avoid reading entire file
+            lines = f.readlines()
+            content = ''.join(lines[-10000:])
+        return content
+    
+    @staticmethod
+    def _empty() -> dict:
+        return {
+            "ollama_prompt_tokens": 0,
+            "ollama_generated_tokens": 0,
+            "ollama_prompt_tokens_rate": 0,
+            "ollama_generated_tokens_rate": 0,
+        }

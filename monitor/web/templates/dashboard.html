@@ -121,6 +121,12 @@
             <p id="warning-text">Multiple loaded models detected</p>
         </div>
         
+        <!-- Ollama Guidance Banner -->
+        <div id="ollama-guidance-banner" class="warning-banner" style="display: none; background: #1a2e4a; border-left-color: #00d4ff;">
+            <h3>ℹ️ Ollama Guidance</h3>
+            <p id="ollama-guidance-text"></p>
+        </div>
+        
         <div class="grid">
             <!-- GPU Panel -->
             <div class="card">
@@ -262,6 +268,14 @@
                             {% endif %}
                         </span>
                     </div>
+                    {% if models and models.ollama_guidance %}
+                    <div class="metric">
+                        <span class="metric-label">Ollama Guidance</span>
+                        <span class="metric-value" hx-get="/api/probes/models" hx-trigger="every 5s" hx-swap="none">
+                            {{ models.ollama_guidance[0] | default('N/A') }}
+                        </span>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
             
@@ -357,7 +371,7 @@
             evt.detail.headers['Cache-Control'] = 'no-cache';
         });
         
-        // Update warning banner from probe data
+        // Update warning and ollama guidance banners from probe data
         async function checkProbes() {
             try {
                 const response = await fetch('/api/probes/detect');
@@ -365,12 +379,21 @@
                     const data = await response.json();
                     const banner = document.getElementById('warning-banner');
                     const warningText = document.getElementById('warning-text');
+                    const guidanceBanner = document.getElementById('ollama-guidance-banner');
+                    const guidanceText = document.getElementById('ollama-guidance-text');
                     
                     if (data.warning) {
                         warningText.textContent = data.warning;
                         banner.style.display = 'block';
                     } else {
                         banner.style.display = 'none';
+                    }
+                    
+                    if (data.ollama_guidance && data.ollama_guidance.length > 0) {
+                        guidanceText.textContent = data.ollama_guidance.join(' ');
+                        guidanceBanner.style.display = 'block';
+                    } else {
+                        guidanceBanner.style.display = 'none';
                     }
                     
                     // Update loaded model data

@@ -56,6 +56,19 @@ async def init_db():
             """)
             await db.commit()
         
+        # Check if ollama_stats column exists
+        cursor = await db.execute("PRAGMA table_info(telemetry_samples)")
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+        
+        if "ollama_stats" not in column_names:
+            logger.info("Adding ollama_stats column to telemetry_samples")
+            await db.execute("""
+                ALTER TABLE telemetry_samples 
+                ADD COLUMN ollama_stats TEXT
+            """)
+            await db.commit()
+        
         await db.execute("""
             CREATE TABLE IF NOT EXISTS models (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -210,15 +223,16 @@ async def insert_telemetry_sample(
     gpu_power=None,
     process_memory=None,
     gpu_process_memory=None,
-    llama_stats=None
+    llama_stats=None,
+    ollama_stats=None
 ):
     """Insert a telemetry sample into the database."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
             INSERT INTO telemetry_samples 
-            (timestamp, memory_total, memory_free, memory_used, gpu_util, gpu_temp, gpu_power, process_memory, gpu_process_memory, llama_stats)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (timestamp, memory_total, memory_free, memory_used, gpu_util, gpu_temp, gpu_power, process_memory, gpu_process_memory, llama_stats, ollama_stats)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -230,7 +244,8 @@ async def insert_telemetry_sample(
                 gpu_power,
                 process_memory,
                 gpu_process_memory,
-                llama_stats
+                llama_stats,
+                ollama_stats
             )
         )
         await db.commit()

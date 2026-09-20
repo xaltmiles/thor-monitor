@@ -108,6 +108,41 @@ class BenchmarkRunner:
         async with self._lock:
             return self._current_run
     
+    async def trigger_run(
+        self,
+        workload_type: str = "standard",
+        max_tokens: int = 512,
+        prompt_tokens: int = 64,
+        tag: str = "standard"
+    ) -> BenchmarkRun:
+        """Trigger a new benchmark run.
+        
+        Acquires the lock exactly once, then spawns the run task.
+        If a run is already queued/running, returns that run instead.
+        """
+        async with self._lock:
+            if self._current_run and self._current_run.state in (
+                BenchmarkState.QUEUED, BenchmarkState.RUNNING
+            ):
+                return self._current_run
+            
+            run = await self._create_run(
+                workload_type=workload_type,
+                max_tokens=max_tokens,
+                prompt_tokens=prompt_tokens,
+                tag=tag,
+            )
+            
+            workload_params = {
+                "workload_type": workload_type,
+                "max_tokens": max_tokens,
+                "prompt_tokens": prompt_tokens,
+                "tag": tag
+            }
+            self._run_task = asyncio.create_task(self._run_benchmark(run, workload_params))
+            
+            return run
+    
     async def start_run(
         self,
         workload_type: str = "standard",
@@ -115,79 +150,88 @@ class BenchmarkRunner:
         prompt_tokens: int = 64,
         tag: str = "standard"
     ) -> BenchmarkRun:
-        """Start a new benchmark run.
+        """Create a run in queued state without starting execution.
         
-        Args:
-            workload_type: Type of workload (e.g., 'standard', 'custom')
-            max_tokens: Maximum tokens to generate
-            prompt_tokens: Approximate prompt length in tokens
-            tag: Tag for the run (e.g., 'standard', 'custom')
-            
-        Returns:
-            The BenchmarkRun being started or current run if one is active
+        Prefer trigger_run(): it also starts the run task. This method exists
+        for tests and manual control over when execution begins.
         """
         async with self._lock:
             if self._current_run and self._current_run.state in (
                 BenchmarkState.QUEUED, BenchmarkState.RUNNING
             ):
-                # Return current run if one is active
                 return self._current_run
             
-            # Detect server and model
-            servers = await self.server_detector.detect()
-            llama_servers = [s for s in servers if s.type == "llama-server" and s.port]
-            
-            if not llama_servers:
-                raise RuntimeError("No llama-server detected")
-            
-            server = llama_servers[0]
-            
-            # Get model info
-            models = await self.model_detector.detect([server])
-            if not models:
-                raise RuntimeError(f"No model detected for {server.name}")
-            
-            model = models[0]
-            
-            # Insert model if not exists (for historical runs)
-            model_id = await insert_model(
-                name=model.name,
-                quant=model.quant,
-                context_length=model.context_length,
-                server_type=model.server_type or server.type,
-                file_size=model.file_size
-            )
-            
-            # Create benchmark run record (initial state: queued)
-            workload_params = json.dumps({
-                "workload_type": workload_type,
-                "max_tokens": max_tokens,
-                "prompt_tokens": prompt_tokens,
-                "tag": tag
-            })
-            
-            run_id = await insert_benchmark_run(
-                model_id=model_id,
+            return await self._create_run(
                 workload_type=workload_type,
-                standard_run=(tag == "standard"),
-                model_name=model.name,
-                model_quant=model.quant,
-                context_length=model.context_length,
-                server_type=server.type,
-                server_port=server.port,
-                workload_params=workload_params,
-                tags=tag
+                max_tokens=max_tokens,
+                prompt_tokens=prompt_tokens,
+                tag=tag,
             )
-            
-            self._current_run = BenchmarkRun(
-                run_id=run_id,
-                model_name=model.name,
-                server_type=server.type,
-                server_port=server.port,
-                state=BenchmarkState.QUEUED
-            )
-            
-            return self._current_run
+    
+    async def _create_run(
+        self,
+        workload_type: str,
+        max_tokens: int,
+        prompt_tokens: int,
+        tag: str,
+    ) -> BenchmarkRun:
+        """Create the run row and current-run object. Caller must hold self._lock."""
+        # Detect server and model
+        servers = await self.server_detector.detect()
+        llama_servers = [s for s in servers if s.type == "llama-server" and s.port]
+        
+        if not llama_servers:
+            raise RuntimeError("No llama-server detected")
+        
+        server = llama_servers[0]
+        
+        # Get model info
+        models = await self.model_detector.detect([server])
+        if not models:
+            raise RuntimeError(f"No model detected for {server.name}")
+        
+        model = models[0]
+        
+        # Insert model if not exists (for historical runs)
+        model_id = await insert_model(
+            name=model.name,
+            quant=model.quant,
+            context_length=model.context_length,
+            server_type=model.server_type or server.type,
+            file_size=model.file_size
+        )
+        
+        # Create benchmark run record (initial state: queued)
+        workload_params = json.dumps({
+            "workload_type": workload_type,
+            "max_tokens": max_tokens,
+            "prompt_tokens": prompt_tokens,
+            "tag": tag
+        })
+        
+        run_id = await insert_benchmark_run(
+            model_id=model_id,
+            workload_type=workload_type,
+            standard_run=(tag == "standard"),
+            model_name=model.name,
+            model_quant=model.quant,
+            context_length=model.context_length,
+            server_type=server.type,
+            server_port=server.port,
+            state=BenchmarkState.QUEUED,
+            workload_params=workload_params,
+            tags=tag
+        )
+        
+        self._current_run = BenchmarkRun(
+            run_id=run_id,
+            model_name=model.name,
+            server_type=server.type,
+            server_port=server.port,
+            state=BenchmarkState.QUEUED
+        )
+        
+        return self._current_run
     
     async def _run_benchmark(self, run: BenchmarkRun, workload_params: Dict[str, Any]) -> None:
         """Execute the benchmark run logic (queued -> running -> done/aborted).
@@ -206,14 +250,14 @@ class BenchmarkRunner:
             run.state = BenchmarkState.RUNNING
             
             # Update run to running state
-            await update_benchmark_run(run_id=run.run_id)
+            await update_benchmark_run(run_id=run.run_id, state=BenchmarkState.RUNNING)
             
             # Sample footprint before run
             footprint_before = await self._sample_footprint()
             
             # Run the actual workload
             workload_start = time.time()
-            ttft, peak_gen_tok_s = await self._run_workload(
+            ttft, peak_gen_tok_s, tokens_generated = await self._run_workload(
                 run.server_port,
                 max_tokens=workload_params.get("max_tokens", 512)
             )
@@ -229,7 +273,7 @@ class BenchmarkRunner:
             
             # Update run with final metrics
             peak_gen_tok_s = peak_gen_tok_s or 0
-            gen_tok_s = workload_params.get("max_tokens", 512) / workload_total if workload_total > 0 else 0
+            gen_tok_s = tokens_generated / workload_total if workload_total > 0 else 0
             
             await update_benchmark_run(
                 run_id=run.run_id,
@@ -237,8 +281,10 @@ class BenchmarkRunner:
                 ttft=ttft,
                 gen_tok_s=gen_tok_s,
                 peak_gen_tok_s=peak_gen_tok_s,
+                memory_before=json.dumps(footprint_before.get("memory", {})),
                 memory_during=json.dumps(footprint_during.get("memory", {})),
                 memory_after=json.dumps(footprint_after.get("memory", {})),
+                gpu_before=json.dumps(footprint_before.get("gpu", {})),
                 gpu_during=json.dumps(footprint_during.get("gpu", {})),
                 gpu_after=json.dumps(footprint_after.get("gpu", {}))
             )
@@ -253,9 +299,12 @@ class BenchmarkRunner:
             run.state = BenchmarkState.ABORTED
             run.abort_reason = f"Unexpected error: {str(e)}"
             run.finished_at = time.time()
+        finally:
+            # Persist final state (done or aborted) with the abort reason if any
             await update_benchmark_run(
                 run_id=run.run_id,
-                memory_after=json.dumps({"error": str(e)})
+                state=run.state,
+                abort_reason=run.abort_reason,
             )
     
     async def _queue_until_idle(self, run: BenchmarkRun) -> None:
@@ -294,9 +343,12 @@ class BenchmarkRunner:
                         if active_requests == 0:
                             # Server is idle
                             return
-                        
-                        # Log and continue waiting
-                        await asyncio.sleep(self.queue_poll_interval)
+                    else:
+                        # Non-200: keep waiting (server may be restarting); the
+                        # timeout check above is the real abort condition
+                        pass
+                    
+                    await asyncio.sleep(self.queue_poll_interval)
                         
                 except httpx.RequestError as e:
                     run.state = BenchmarkState.ABORTED
@@ -304,6 +356,8 @@ class BenchmarkRunner:
                         f"Server unreachable while queued: {str(e)}"
                     )
                     return
+    
+    GEN_WINDOW_SECONDS = 0.05  # coalesce buffered SSE bursts into rate windows
     
     async def _run_workload(self, port: int, max_tokens: int) -> tuple:
         """Run the actual benchmark workload against the OpenAI-compatible endpoint.
@@ -326,8 +380,10 @@ class BenchmarkRunner:
             
             ttft = None
             tokens_generated = 0
-            chunk_times: List[float] = []
+            gen_rates: List[float] = []
             last_chunk_time = None
+            self._window_start = None
+            self._window_tokens = 0
             
             request_start_time = time.time()
             
@@ -351,29 +407,41 @@ class BenchmarkRunner:
                         chunk_time = time.time()
                         
                         if ttft is None and chunk.get("choices"):
-                            # First chunk - capture TTFT
+                            # First content chunk - capture TTFT
                             ttft = chunk_time - request_start_time
-                            chunk_times.append(ttft)
+                            last_chunk_time = chunk_time
                         
-                        # Track generation rate
+                        # Track generation rate (rates only; TTFT is a time, not a rate).
+                        # Chunks buffered in one TCP segment arrive microseconds apart,
+                        # so raw per-chunk deltas measure network batching, not token
+                        # speed. Coalesce bursts: a window closes only when a chunk
+                        # arrives >= GEN_WINDOW_SECONDS after the window opened.
                         if ttft is not None:
                             tokens_in_chunk = self._count_tokens_in_chunk(chunk)
                             if tokens_in_chunk > 0:
-                                if last_chunk_time is not None:
-                                    delta_time = chunk_time - last_chunk_time
-                                    if delta_time > 0:
-                                        tok_s = tokens_in_chunk / delta_time
-                                        chunk_times.append(tok_s)
+                                if self._window_start is None:
+                                    self._window_start = chunk_time
+                                    self._window_tokens = 0
+                                self._window_tokens += tokens_in_chunk
+                                if chunk_time - self._window_start >= self.GEN_WINDOW_SECONDS:
+                                    gen_rates.append(self._window_tokens / (chunk_time - self._window_start))
+                                    self._window_start = chunk_time
+                                    self._window_tokens = 0
                                 last_chunk_time = chunk_time
                                 tokens_generated += tokens_in_chunk
                         
-                    # Calculate peak generation rate
-                    peak_gen_tok_s = max(chunk_times) if chunk_times else 0
+                    # Flush any open window, then peak generation rate (0 when nothing streamed)
+                    if self._window_start is not None and self._window_tokens > 0 and last_chunk_time:
+                        window_duration = max(last_chunk_time - self._window_start, self.GEN_WINDOW_SECONDS)
+                        gen_rates.append(self._window_tokens / window_duration)
+                    self._window_start = None
+                    self._window_tokens = 0
+                    peak_gen_tok_s = max(gen_rates) if gen_rates else 0
                     
-                    return ttft or 0, peak_gen_tok_s
+                    return ttft or 0, peak_gen_tok_s, tokens_generated
                     
             except httpx.RequestError as e:
-                return 0, 0
+                return 0, 0, tokens_generated
     
     def _parse_active_requests(self, metrics_text: str) -> int:
         """Parse the llamacpp:requests_processing gauge from metrics text."""
@@ -419,42 +487,3 @@ class BenchmarkRunner:
             "memory": memory_data,
             "gpu": {**gpu_data, "processes": gpu_memory_data.get("gpu_processes", [])}
         }
-    
-    async def trigger_run(
-        self,
-        workload_type: str = "standard",
-        max_tokens: int = 512,
-        prompt_tokens: int = 64,
-        tag: str = "standard"
-    ) -> BenchmarkRun:
-        """Trigger a new benchmark run.
-        
-        Returns the current BenchmarkRun (either newly created or existing).
-        If a run is already queued/running, returns that run instead of starting a new one.
-        """
-        async with self._lock:
-            # Check if a run is already active
-            if self._current_run and self._current_run.state in (
-                BenchmarkState.QUEUED, BenchmarkState.RUNNING
-            ):
-                return self._current_run
-            
-            # Start new run
-            run = await self.start_run(
-                workload_type=workload_type,
-                max_tokens=max_tokens,
-                prompt_tokens=prompt_tokens,
-                tag=tag
-            )
-            
-            # Start the run task
-            workload_params = {
-                "workload_type": workload_type,
-                "max_tokens": max_tokens,
-                "prompt_tokens": prompt_tokens,
-                "tag": tag
-            }
-            
-            self._run_task = asyncio.create_task(self._run_benchmark(run, workload_params))
-            
-            return run

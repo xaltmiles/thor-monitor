@@ -55,6 +55,7 @@ async def init_db():
                 ADD COLUMN llama_stats TEXT
             """)
             await db.commit()
+        
         await db.execute("""
             CREATE TABLE IF NOT EXISTS models (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,9 +93,20 @@ async def init_db():
                 gpu_during TEXT,
                 gpu_after TEXT,
                 created_at TEXT NOT NULL,
+                state TEXT,
+                abort_reason TEXT,
                 FOREIGN KEY (model_id) REFERENCES models(id)
             )
         """)
+        
+        # Migrate stores created before the state/abort_reason columns existed
+        cursor = await db.execute("PRAGMA table_info(benchmark_runs)")
+        br_columns = [col[1] for col in await cursor.fetchall()]
+        for col in ("state", "abort_reason"):
+            if col not in br_columns:
+                logger.info("Adding %s column to benchmark_runs", col)
+                await db.execute(f"ALTER TABLE benchmark_runs ADD COLUMN {col} TEXT")
+        await db.commit()
         await db.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -456,6 +468,8 @@ async def insert_benchmark_run(
     model_quant: str = None,
     context_length: int = None,
     server_type: str = None,
+    server_port: int = None,
+    state: str = None,
     workload_params: str = None,
     tags: str = None,
     memory_before: str = None,
@@ -499,14 +513,14 @@ async def insert_benchmark_run(
                 (model_id, workload_type, standard_run, total_time, ttft,
                  prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
                  model_name, model_quant, context_length, server_type,
-                 workload_params, tags,
+                 server_port, state, workload_params, tags,
                  memory_before, memory_during, memory_after,
                  gpu_before, gpu_during, gpu_after, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (model_id, workload_type, standard_run, total_time, ttft,
              prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
              model_name, model_quant, context_length, server_type,
-             workload_params, tags,
+             server_port, state, workload_params, tags,
              memory_before, memory_during, memory_after,
              gpu_before, gpu_during, gpu_after,
              datetime.now(timezone.utc).isoformat())
@@ -523,13 +537,17 @@ async def insert_benchmark_run(
 
 async def update_benchmark_run(
     run_id: int,
+    state: str = None,
+    abort_reason: str = None,
     total_time: float = None,
     ttft: float = None,
     prompt_tok_s: float = None,
     gen_tok_s: float = None,
     peak_gen_tok_s: float = None,
     concurrent_throughput: float = None,
+    memory_before: str = None,
     memory_during: str = None,
+    gpu_before: str = None,
     gpu_during: str = None,
     memory_after: str = None,
     gpu_after: str = None
@@ -552,19 +570,24 @@ async def update_benchmark_run(
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """UPDATE benchmark_runs
-                SET total_time = COALESCE(?, total_time),
+                SET state = COALESCE(?, state),
+                    abort_reason = COALESCE(?, abort_reason),
+                    total_time = COALESCE(?, total_time),
                     ttft = COALESCE(?, ttft),
                     prompt_tok_s = COALESCE(?, prompt_tok_s),
                     gen_tok_s = COALESCE(?, gen_tok_s),
                     peak_gen_tok_s = COALESCE(?, peak_gen_tok_s),
                     concurrent_throughput = COALESCE(?, concurrent_throughput),
+                    memory_before = COALESCE(?, memory_before),
                     memory_during = COALESCE(?, memory_during),
+                    gpu_before = COALESCE(?, gpu_before),
                     gpu_during = COALESCE(?, gpu_during),
                     memory_after = COALESCE(?, memory_after),
                     gpu_after = COALESCE(?, gpu_after)
                 WHERE id = ?""",
-            (total_time, ttft, prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
-             memory_during, gpu_during, memory_after, gpu_after, run_id)
+            (state, abort_reason, total_time, ttft, prompt_tok_s, gen_tok_s,
+             peak_gen_tok_s, concurrent_throughput, memory_before, memory_during,
+             gpu_before, gpu_during, memory_after, gpu_after, run_id)
         )
         await db.commit()
 

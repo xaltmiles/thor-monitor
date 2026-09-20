@@ -48,6 +48,11 @@ async def render_template(template_name: str, context: dict):
 def create_app():
     app = FastAPI(title="Monitor")
     
+    # One shared BenchmarkRunner for the whole app: run state must survive
+    # across requests, so never instantiate per-request.
+    from ..benchmarks import BenchmarkRunner
+    app.state.benchmark_runner = BenchmarkRunner()
+    
     @app.get("/", response_class=HTMLResponse)
     async def dashboard():
         """Render the main dashboard page."""
@@ -168,9 +173,7 @@ def create_app():
     @app.post("/api/benchmarks/start")
     async def api_benchmarks_start():
         """Start a new benchmark run."""
-        from ..benchmarks import BenchmarkRunner
-        
-        runner = BenchmarkRunner()
+        runner = app.state.benchmark_runner
         try:
             run = await runner.trigger_run()
             return {
@@ -184,11 +187,9 @@ def create_app():
             }, 500
     
     @app.get("/api/benchmarks/status")
-    async def api_benchmarks_status():
+    async def api_benchmarks_status(request: Request):
         """Get current benchmark run status."""
-        from ..benchmarks import BenchmarkRunner
-        
-        runner = BenchmarkRunner()
+        runner = request.app.state.benchmark_runner
         run = await runner.get_status()
         
         if run:

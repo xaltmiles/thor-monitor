@@ -214,86 +214,205 @@ class TestFakeLLaMAServerStreaming:
 
 
 class TestBenchmarkIntegration:
-    """Integration tests with fake LLaMA server."""
+    """Integration tests with fake LLaMA server over real HTTP."""
+    
+    @staticmethod
+    def _fixture_detectors(port: int):
+        """Detectors that 'find' a llama-server on the fake server's port."""
+        from monitor.probes import ServerDetectorImpl, ModelDetectorImpl
+        from monitor.probes.fixtures import FixtureServerDetector
+        from monitor.probes.interface import ServerInfo
+        
+        server_detector = FixtureServerDetector([
+            ServerInfo(
+                pid=4242,
+                name="llama-server",
+                type="llama-server",
+                port=port,
+                cmdline=["llama-server", "-m", "/models/fake-Q4_K_M.gguf", "--port", str(port)],
+            )
+        ])
+        # /info unavailable on the fake server -> falls back to cmdline parsing
+        model_detector = ModelDetectorImpl(transport=httpx.MockTransport(lambda req: httpx.Response(404)))
+        return server_detector, model_detector
+    
+    @staticmethod
+    async def _wait_for_state(runner, states, timeout=15.0):
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            run = await runner.get_status()
+            if run and run.state in states:
+                return run
+            await asyncio.sleep(0.1)
+        raise TimeoutError(f"run never reached {states}; last={run.state if run else None}")
     
     @pytest.mark.asyncio
-    async def test_benchmark_runs_to_completion(self, temp_db_path):
-        """Test end-to-end benchmark with fake server.
+    async def test_benchmark_e2e_trigger_to_stored_row(self, temp_db_path):
+        """Real end-to-end: trigger -> queue -> run -> stored result, via HTTP-shaped path.
         
-        This test:
-        1. Starts a fake LLaMA server
-        2. Runs a benchmark
-        3. Verifies the run completes and is stored
+        Exercises trigger_run() (the API's code path, including its locking),
+        the streaming workload against the fake server, and the stored row.
         """
-        from monitor.store import DB_PATH as original_path
         import monitor.store
-        from monitor.benchmarks import BenchmarkRunner
+        from monitor.benchmarks import BenchmarkRunner, BenchmarkState
         from tests.fake_llama_server import FakeLLaMAServer
         
         monitor.store.DB_PATH = temp_db_path
         
-        server = FakeLLaMAServer(port=18088)
-        
-        try:
+        async with FakeLLaMAServer(port=18088) as server:
             await init_db()
-            
-            # Start fake server with no active requests
             server.active_requests = 0
-            await server.start()
+            server.set_streaming_config({"first_chunk_delay_ms": 20, "delay_ms": 5, "tokens_per_chunk": 8})
             
-            # Configure fast streaming for testing
-            server.set_streaming_config({
-                "first_chunk_delay_ms": 10,
-                "delay_ms": 5,
-                "tokens_per_chunk": 8
-            })
-            
-            # Create runner pointing to fake server
+            server_detector, model_detector = self._fixture_detectors(server.port)
             runner = BenchmarkRunner(
-                max_queue_wait=5,  # Short timeout for testing
-                server_detector=None  # Will detect from fake server
+                max_queue_wait=5,
+                queue_poll_interval=0.2,
+                server_detector=server_detector,
+                model_detector=model_detector,
             )
             
-            # Run the benchmark (this will fail because we can't override server port
-            # in the detector, so we'll test via the store directly)
-            # The real test is that the runner can create and update runs
+            run = await runner.trigger_run(max_tokens=64)
+            assert run.state == BenchmarkState.QUEUED
             
-            run_id = await insert_benchmark_run(
-                model_id=1,
-                workload_type="standard",
-                standard_run=True,
-                model_name="test-model",
-                server_type="llama-server",
-                workload_params=json.dumps({"max_tokens": 32}),
-                tags="standard"
+            run = await self._wait_for_state(runner, (BenchmarkState.DONE, BenchmarkState.ABORTED))
+            assert run.state == BenchmarkState.DONE, f"run aborted: {run.abort_reason}"
+            assert run.ttft is not None and run.ttft > 0
+            assert run.peak_gen_tok_s is not None and run.peak_gen_tok_s > 0
+            assert run.total_time is not None and run.total_time > 0
+            
+            # Stored row carries model identity, server type/port, workload params, tag
+            row = await get_benchmark_run(run.run_id)
+            assert row["state"] == "done"
+            assert row["model_name"] == "fake-Q4_K_M"
+            assert row["model_quant"] == "Q4_K_M"
+            assert row["server_type"] == "llama-server"
+            assert row["server_port"] == server.port
+            assert row["ttft"] == run.ttft
+            assert row["peak_gen_tok_s"] == run.peak_gen_tok_s
+            assert "standard" in row["tags"]
+            params = json.loads(row["workload_params"])
+            assert params["max_tokens"] == 64
+            assert row["standard_run"] == 1
+            
+            # Footprint sampled before/during/after and stored
+            for col in ("memory_before", "memory_during", "memory_after", "gpu_before", "gpu_during", "gpu_after"):
+                assert row[col], f"{col} not stored"
+            assert "memory_total" in json.loads(row["memory_before"])
+    
+    @pytest.mark.asyncio
+    async def test_benchmark_queues_until_server_drains(self, temp_db_path):
+        """Run waits while the server reports active requests, then proceeds."""
+        import monitor.store
+        from monitor.benchmarks import BenchmarkRunner, BenchmarkState
+        from tests.fake_llama_server import FakeLLaMAServer
+        
+        monitor.store.DB_PATH = temp_db_path
+        
+        async with FakeLLaMAServer(port=18086) as server:
+            await init_db()
+            server.active_requests = 1  # busy
+            server.set_streaming_config({"first_chunk_delay_ms": 10, "delay_ms": 5, "tokens_per_chunk": 8})
+            
+            server_detector, model_detector = self._fixture_detectors(server.port)
+            runner = BenchmarkRunner(
+                max_queue_wait=10,
+                queue_poll_interval=0.2,
+                server_detector=server_detector,
+                model_detector=model_detector,
             )
             
-            # Update with mock metrics
-            await update_benchmark_run(
-                run_id=run_id,
-                total_time=0.3,
-                ttft=0.01,
-                gen_tok_s=100.0,
-                peak_gen_tok_s=120.0,
-                memory_during=json.dumps({"memory_used": 16_000_000_000}),
-                memory_after=json.dumps({"memory_used": 16_000_000_000}),
-                gpu_during=json.dumps({"gpu_util": 45.0}),
-                gpu_after=json.dumps({"gpu_util": 35.0})
+            run = await runner.trigger_run(max_tokens=32)
+            assert run.state == BenchmarkState.QUEUED
+            
+            # Still queued while the server is busy
+            await asyncio.sleep(0.7)
+            run = await runner.get_status()
+            assert run.state == BenchmarkState.QUEUED
+            
+            # Drain: the run should now proceed to done
+            server.active_requests = 0
+            run = await self._wait_for_state(runner, (BenchmarkState.DONE, BenchmarkState.ABORTED))
+            assert run.state == BenchmarkState.DONE, f"run aborted: {run.abort_reason}"
+    
+    @pytest.mark.asyncio
+    async def test_benchmark_queue_timeout_aborts_with_reason(self, temp_db_path):
+        """Server stays busy -> run aborts at the queue timeout with a stored reason."""
+        import monitor.store
+        from monitor.benchmarks import BenchmarkRunner, BenchmarkState
+        from tests.fake_llama_server import FakeLLaMAServer
+        
+        monitor.store.DB_PATH = temp_db_path
+        
+        async with FakeLLaMAServer(port=18087) as server:
+            await init_db()
+            server.active_requests = 3  # stays busy the whole time
+            
+            server_detector, model_detector = self._fixture_detectors(server.port)
+            runner = BenchmarkRunner(
+                max_queue_wait=1,
+                queue_poll_interval=0.2,
+                server_detector=server_detector,
+                model_detector=model_detector,
             )
             
-            # Retrieve and verify
-            run = await get_benchmark_run(run_id)
+            run = await runner.trigger_run(max_tokens=32)
+            run = await self._wait_for_state(runner, (BenchmarkState.ABORTED,), timeout=10.0)
             
-            # state is tracked by BenchmarkRun class, not in the DB row
-            # assert run["state"] is None  # Not tracked by store
-            assert run["total_time"] == 0.3
-            assert run["ttft"] == 0.01
-            assert run["peak_gen_tok_s"] == 120.0
-            assert "standard" in run["tags"]
+            assert run.state == BenchmarkState.ABORTED
+            assert run.abort_reason and "drain" in run.abort_reason
             
-        finally:
-            await server.stop()
-            monitor.store.DB_PATH = original_path
+            row = await get_benchmark_run(run.run_id)
+            assert row["state"] == "aborted"
+            assert row["abort_reason"] == run.abort_reason
+    
+    @pytest.mark.asyncio
+    async def test_api_uses_single_shared_runner(self, temp_db_path):
+        """The API layer shares one runner: concurrent triggers return the same run.
+        
+        Guards against per-request BenchmarkRunner instantiation (state would
+        never be shared) and against the trigger lock self-deadlocking.
+        """
+        import monitor.store
+        from monitor.web.routes import app as routes_app
+        from monitor.benchmarks import BenchmarkRunner
+        from tests.fake_llama_server import FakeLLaMAServer
+        
+        monitor.store.DB_PATH = temp_db_path
+        await init_db()
+        
+        async with FakeLLaMAServer(port=18089) as server:
+            server.active_requests = 0
+            server.set_streaming_config({"first_chunk_delay_ms": 50, "delay_ms": 20, "tokens_per_chunk": 8})
+            
+            server_detector, model_detector = self._fixture_detectors(server.port)
+            test_runner = BenchmarkRunner(
+                max_queue_wait=5,
+                queue_poll_interval=0.2,
+                server_detector=server_detector,
+                model_detector=model_detector,
+            )
+            routes_app.state.benchmark_runner = test_runner
+            
+            transport = httpx.ASGITransport(app=routes_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                # Two overlapping triggers -> same run, no deadlock
+                r1, r2 = await asyncio.gather(
+                    client.post("/api/benchmarks/start", timeout=15),
+                    client.post("/api/benchmarks/start", timeout=15),
+                )
+                assert r1.status_code == 200 and r2.status_code == 200
+                id1 = r1.json()["run"]["id"]
+                id2 = r2.json()["run"]["id"]
+                assert id1 == id2
+                
+                # Status endpoint sees the same shared run
+                r3 = await client.get("/api/benchmarks/status", timeout=10)
+                assert r3.status_code == 200
+                body = r3.json()
+                assert body["run"] is not None
+                assert body["run"]["id"] == id1
+                assert body["status"] in ("queued", "running", "done")
 
 
 class TestBenchmarkStateMachine:

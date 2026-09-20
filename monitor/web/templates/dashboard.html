@@ -118,7 +118,7 @@
         <!-- Warning Banner -->
         <div id="warning-banner" class="warning-banner" style="display: none;">
             <h3>⚠️ Warning</h3>
-            <p id="warning-text">Multiple loaded models detected</p>
+            <p id="warning-text">{{ gpu_warning or 'Multiple loaded models detected' }}</p>
         </div>
         
         <!-- Ollama Guidance Banner -->
@@ -371,6 +371,45 @@
             evt.detail.headers['Cache-Control'] = 'no-cache';
         });
         
+        // Check GPU telemetry against warning thresholds
+        async function checkGPUGetWarning() {
+            try {
+                const response = await fetch('/api/telemetry/latest');
+                if (!response.ok) return;
+                const data = await response.json();
+                
+                // Get thresholds from dataset attributes
+                const warningBanner = document.getElementById('warning-banner');
+                const warningText = document.getElementById('warning-text');
+                const gpuWarningEl = document.getElementById('gpu-warning-text');
+                
+                if (data && (data.gpu_temp !== null && data.gpu_temp !== undefined || data.gpu_util !== null && data.gpu_util !== undefined)) {
+                    // Check thresholds
+                    let exceeds = [];
+                    
+                    // Get current thresholds from data attributes or use defaults
+                    const tempThreshold = {{ warning_gpu_temp or 85.0 }};
+                    const utilThreshold = {{ warning_gpu_util or 95.0 }};
+                    
+                    if (data.gpu_temp !== null && data.gpu_temp >= tempThreshold) {
+                        exceeds.push(`GPU temperature ${data.gpu_temp}°C >= threshold ${tempThreshold}°C`);
+                    }
+                    if (data.gpu_util !== null && data.gpu_util >= utilThreshold) {
+                        exceeds.push(`GPU utilization ${data.gpu_util}% >= threshold ${utilThreshold}%`);
+                    }
+                    
+                    if (exceeds.length > 0) {
+                        warningText.textContent = exceeds.join('; ');
+                        warningBanner.style.display = 'block';
+                    } else {
+                        warningBanner.style.display = 'none';
+                    }
+                }
+            } catch (err) {
+                // Silent fail
+            }
+        }
+        
         // Update warning and ollama guidance banners from probe data
         async function checkProbes() {
             try {
@@ -408,6 +447,10 @@
         
         // Check probes every 5 seconds
         setInterval(checkProbes, 5000);
+        
+        // Check GPU warnings every 2 seconds
+        setInterval(checkGPUGetWarning, 2000);
+        checkGPUGetWarning();
         
         // Update token speeds every second
         async function updateTokenSpeeds() {

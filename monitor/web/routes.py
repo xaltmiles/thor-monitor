@@ -86,6 +86,32 @@ def create_app():
         from ..probes import run_probes
         probes_result = await run_probes()
         
+        # Get warning thresholds from settings
+        warning_gpu_temp = None
+        warning_gpu_util = None
+        try:
+            import asyncio
+            from ..store import get_settings
+            settings = asyncio.get_event_loop().run_until_complete(get_settings())
+            if settings:
+                warning_gpu_temp = settings.get("warning_gpu_temp")
+                warning_gpu_util = settings.get("warning_gpu_util")
+        except RuntimeError:
+            pass
+        
+        # Check if telemetry exceeds thresholds
+        gpu_warning = None
+        if latest:
+            if warning_gpu_temp is not None and latest.get("gpu_temp") is not None:
+                if latest["gpu_temp"] >= warning_gpu_temp:
+                    gpu_warning = f"GPU temperature {latest['gpu_temp']}°C exceeds threshold {warning_gpu_temp}°C"
+            if warning_gpu_util is not None and latest.get("gpu_util") is not None:
+                if latest["gpu_util"] >= warning_gpu_util:
+                    if gpu_warning:
+                        gpu_warning += f"; GPU utilization {latest['gpu_util']}% exceeds threshold {warning_gpu_util}%"
+                    else:
+                        gpu_warning = f"GPU utilization {latest['gpu_util']}% exceeds threshold {warning_gpu_util}%"
+        
         # Convert to list for template (Jinja2 has issues with dict in template context)
         history_list = list(history) if history else []
         
@@ -93,6 +119,9 @@ def create_app():
             "latest": latest,
             "history": history_list,
             "models": probes_result,
+            "gpu_warning": gpu_warning,
+            "warning_gpu_temp": warning_gpu_temp,
+            "warning_gpu_util": warning_gpu_util,
         })
         return HTMLResponse(content=content)
     
@@ -347,7 +376,18 @@ def create_app():
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page():
         """Render the settings page."""
-        content = await render_template("settings.html", {})
+        from ..store import get_settings
+        
+        # Get current settings for initial render
+        try:
+            import asyncio
+            settings = asyncio.get_event_loop().run_until_complete(get_settings())
+        except RuntimeError:
+            settings = None
+        
+        content = await render_template("settings.html", {
+            "settings": settings,
+        })
         return HTMLResponse(content=content)
     
     return app

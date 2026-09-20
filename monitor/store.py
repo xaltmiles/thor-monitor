@@ -10,6 +10,16 @@ DB_PATH = Path.home() / ".monitor" / "monitor.db"
 logger = logging.getLogger(__name__)
 
 
+# Default settings values - single source of truth
+DEFAULTS = {
+    "sample_rate": 1,
+    "standard_workload_duration": 10,
+    "max_queue_wait": 120,
+    "warning_gpu_temp": 85.0,
+    "warning_gpu_util": 95.0,
+}
+
+
 async def init_db():
     """Initialize the database with required tables."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -145,7 +155,8 @@ async def init_db():
         
         # Insert default settings row if not exists
         await db.execute(
-            "INSERT OR IGNORE INTO settings (id, sample_rate, standard_workload_duration, max_queue_wait, warning_gpu_temp, warning_gpu_util) VALUES (1, 1, 10, 120, 85.0, 95.0)"
+            "INSERT OR IGNORE INTO settings (id, sample_rate, standard_workload_duration, max_queue_wait, warning_gpu_temp, warning_gpu_util) VALUES (1, ?, ?, ?, ?, ?)",
+            (DEFAULTS["sample_rate"], DEFAULTS["standard_workload_duration"], DEFAULTS["max_queue_wait"], DEFAULTS["warning_gpu_temp"], DEFAULTS["warning_gpu_util"])
         )
         await db.commit()
         

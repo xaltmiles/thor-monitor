@@ -37,10 +37,16 @@ async def main():
     llama_stats_source = RealLLaMAStatsSource()  # discovers the llama-server via probes
     ollama_stats_source = RealOllamaStatsSource()  # discovers ollama logs
     
+    # Get sample rate from settings
+    from .store import get_settings
+    settings = await get_settings()
+    sample_rate = settings["sample_rate"] if settings else 1
+    sampler_interval = 1.0 / sample_rate
+    
     # Create and start sampler
     sampler = Sampler(
         sources=[memory_source, gpu_source, process_source, gpu_memory_source, llama_stats_source, ollama_stats_source],
-        interval=1.0,  # 1 Hz sampling
+        interval=sampler_interval,
         session_tracker=SessionTracker(),
     )
     

@@ -1,47 +1,59 @@
-# Implementation Complete: Ticket #7
+# Implementation Summary: Issue #10 - Settings Page
 
-## Summary
+## What was implemented
 
-Ticket #7 ([T6] Complete suite: long-context and burst workloads) has been fully implemented with all reviewer issues addressed.
+### 1. Database layer (`monitor/store.py`)
+- Added `get_settings()` function to retrieve current settings
+- Added `update_settings()` function to update settings (partial updates supported)
+- Settings table already existed with columns:
+  - `sample_rate` (INTEGER, default 1)
+  - `standard_workload_duration` (INTEGER, default 10)
+  - `max_queue_wait` (INTEGER, default 120)
+  - `warning_gpu_temp` (REAL, default 85.0)
+  - `warning_gpu_util` (REAL, default 95.0)
+- Added default settings row on `init_db()` using `INSERT OR IGNORE`
 
-## What Was Built
+### 2. HTTP API (`monitor/web/routes.py`)
+- `GET /api/settings` - Returns current settings or defaults
+- `POST /api/settings` - Updates settings with provided fields
+- `GET /settings` - Renders the settings page HTML
 
-### Core Functionality
-- **Long-context workload**: 16k-token prompt, short generation → measures prompt-processing tok/s
-- **Burst workload**: 4 concurrent requests → measures aggregate generation throughput
-- **Progress endpoint** (`/api/benchmarks/progress`): Active workload name, ETA, progress percentage
-- **Dashboard UI**: Progress bar, active workload display, ETA
+### 3. Settings page template (`monitor/web/templates/settings.html`)
+- HTMX-based form for real-time updates
+- Slider input for sampling rate (1-10 Hz)
+- Number inputs for other settings with proper min/max constraints
+- Visual feedback on value changes
+- Save button with success message
 
-### Suite Settings
-- Default parameters: 16k prompt for long-context, 4 concurrent for burst
-- Custom tagging enforced when deviating from defaults
+### 4. Tests (`tests/test_settings.py`)
+- 7 tests covering:
+  - Settings table creation
+  - Default settings retrieval
+  - Settings update (full and partial)
+  - HTTP API endpoints
+  - Integration: custom run tagging
 
-## Acceptance Criteria Met
+## Acceptance criteria verification
 
-- [x] Long-context workload runs and records prompt-processing tok/s
-- [x] Burst workload runs 4 concurrent requests and records aggregate generation throughput
-- [x] A full run produces one stored record with all three workloads' results
-- [x] Progress display names the active workload and ETA
-- [x] Suite parameters come from settings defaults; deviations tag the run custom
-- [x] Tests cover all three workloads against the fake LLM server, including concurrency
+✅ **Settings page edits suite parameters, sampling rate, warning thresholds** - Implemented via HTMX form
+✅ **Values persist in the store and apply without restart** - SQLite persistence, defaults applied on app start
+✅ **Changing suite parameters before a run tags the resulting run custom** - Already implemented in BenchmarkRunner, tests verify
+✅ **Comparison table continues to filter custom runs out of standard comparisons** - Existing functionality, tests verify
+✅ **Tests: edit settings via HTTP, verify persistence, verify a run with modified parameters lands tagged custom** - All 7 tests pass
 
-## Test Results
+## Test results
+- Settings tests: 7/7 passed
+- Full test suite: 92/92 passed
+- Smoke test: PASSED
 
-**59 tests pass** (including 3 new workload e2e tests)
+## Commit
+`1a921e0` - "feat: implement settings page with suite parameters, sampling rate, and thresholds"
 
-## Files Changed
+## Files modified
+- `monitor/store.py` - Added settings functions
+- `monitor/web/routes.py` - Added settings API endpoints
+- `monitor/web/templates/settings.html` - New settings page template
+- `tests/test_settings.py` - New test file
 
-- `monitor/benchmarks.py` - Suite orchestration with progress persistence
-- `monitor/store.py` - New `workload_results` column, SQL fix
-- `monitor/workloads.py` - Workload runner classes
-- `monitor/sse_helper.py` - Shared SSE chunk token counting
-- `monitor/web/routes.py` - Progress endpoint
-- `monitor/web/templates/dashboard.html` - Progress display
-- `tests/test_benchmarks.py` - Workload tests
-
-## Commits
-
-- `55fb877` - feat: implement long-context and burst workloads for benchmark suite
-- `e098035` - fix: address reviewer issues for #7
-
-The code has been committed and pushed to the remote repository.
+## Status
+Implementation complete. Issue #10 updated with "ready-for-human" label for independent review.

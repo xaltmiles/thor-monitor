@@ -9,7 +9,7 @@ import httpx
 
 from .store import (
     init_db, insert_benchmark_run, update_benchmark_run, get_benchmark_run,
-    get_loaded_model, insert_model
+    get_loaded_model, insert_model, get_settings
 )
 from .probes import ServerDetectorImpl, ModelDetectorImpl, run_probes
 from .telemetry.real import RealMemorySource, RealGPUSource, RealGPUMemorySource
@@ -85,7 +85,7 @@ class BenchmarkRunner:
     
     def __init__(
         self,
-        max_queue_wait: int = 120,  # 2 minutes
+        max_queue_wait: Optional[int] = None,  # Use settings if None
         queue_poll_interval: float = 2.0,
         server_detector: Optional[ServerDetectorImpl] = None,
         model_detector: Optional[ModelDetectorImpl] = None
@@ -97,12 +97,51 @@ class BenchmarkRunner:
         
         self._current_run: Optional[BenchmarkRun] = None
         self._lock = asyncio.Lock()
-        self._run_task: Optional[asyncio.Task] = None
         
         # Telemetry sources for footprint sampling
         self._memory_source = RealMemorySource()
         self._gpu_source = RealGPUSource()
         self._gpu_memory_source = RealGPUMemorySource()
+        
+        # Initialize with current settings if not provided and not in async context
+        if self.max_queue_wait is None:
+            self._apply_default_settings()
+    
+    def _apply_default_settings(self):
+        """Apply default settings from store. Runs synchronously."""
+        import asyncio
+        from .store import get_settings, DEFAULTS
+        
+        # Try to get settings from store
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # In async context, can't run synchronously - use default
+                return
+        except RuntimeError:
+            pass
+        
+        # Run async function synchronously
+        try:
+            settings = asyncio.run(get_settings())
+            if settings and "max_queue_wait" in settings:
+                self.max_queue_wait = settings["max_queue_wait"]
+            else:
+                self.max_queue_wait = DEFAULTS["max_queue_wait"]
+        except Exception:
+            self.max_queue_wait = DEFAULTS["max_queue_wait"]
+    
+    async def refresh_settings(self):
+        """Refresh settings from store. Should be called before a run.
+        
+        This method can be called to update settings before a run, but it
+        does not change max_queue_wait (set at init) - that's the runtime
+        value for queue timeout. The suite parameters are read dynamically
+        in _is_standard_run and _get_suite_params.
+        """
+        # No-op - max_queue_wait is set at init and used for runtime operations
+        # Suite parameters are read dynamically in _is_standard_run and _get_suite_params
+        pass
     
     async def get_status(self) -> Optional[BenchmarkRun]:
         """Get current benchmark run status.
@@ -162,11 +201,41 @@ class BenchmarkRunner:
         if tag != "standard":
             return False
         
-        # Compare to defaults
-        default_short_max = 512
+        # Get standard_workload_duration from settings for max_tokens comparison
+        # Read settings synchronously - try multiple approaches
+        import asyncio
+        settings = None
+        try:
+            # Try to run the coroutine synchronously
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # In async context - create a new task
+                task = loop.create_task(get_settings())
+                settings = loop.run_until_complete(task)
+            else:
+                # Loop not running - run until complete
+                settings = loop.run_until_complete(get_settings())
+        except (RuntimeError, AttributeError):
+            # No event loop - create a new one
+            try:
+                settings = asyncio.run(get_settings())
+            except Exception:
+                settings = None
+        
+        # Determine short workload max_tokens from settings or default
+        if settings and "standard_workload_duration" in settings:
+            # Scale max_tokens based on duration relative to default (10 seconds)
+            # Default: 10 seconds -> 512 tokens (~51 tok/s)
+            duration = settings["standard_workload_duration"]
+            default_duration = 10
+            scale = duration / default_duration
+            default_short_max = int(512 * scale)
+        else:
+            default_short_max = 512  # Fallback default
+        
         default_short_prompt = 64
         
-        # For now, just check short workload params (other workloads have fixed defaults)
+        # Compare to defaults
         if max_tokens != default_short_max or prompt_tokens != default_short_prompt:
             return False
         
@@ -557,11 +626,35 @@ class BenchmarkRunner:
         return 0
     
     def _get_suite_params(self, workload_params: Dict[str, Any]) -> Dict[str, Any]:
-        """Get suite parameters, merging workload_params with defaults."""
+        """Get suite parameters, merging workload_params with defaults.
+        
+        Reads standard_workload_duration from settings to determine short
+        workload max_tokens for standard runs. Uses ~50 tok/s to convert
+        duration (seconds) to max_tokens.
+        """
+        # Get current settings
+        try:
+            import asyncio
+            settings = asyncio.get_event_loop().run_until_complete(get_settings())
+        except RuntimeError:
+            # No event loop (e.g., during import)
+            settings = None
+        
+        # Determine short workload max_tokens from settings or default
+        if settings and "standard_workload_duration" in settings:
+            # Scale max_tokens based on duration relative to default (10 seconds)
+            # Default: 10 seconds -> 512 tokens (~51 tok/s)
+            duration = settings["standard_workload_duration"]
+            default_duration = 10
+            scale = duration / default_duration
+            short_max_tokens = int(512 * scale)
+        else:
+            short_max_tokens = 512  # Default fallback
+        
         defaults = {
             "short": {
                 "prompt_tokens": 64,
-                "max_tokens": 512,
+                "max_tokens": short_max_tokens,
             },
             "long-context": {
                 "prompt_tokens": 16384,

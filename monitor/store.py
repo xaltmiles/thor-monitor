@@ -337,3 +337,29 @@ async def get_sessions_history(limit: int = 100) -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+async def update_session(
+    session_id: int,
+    end_time: str = None,
+    avg_tok_s: float = None,
+    total_tokens: int = None
+) -> None:
+    """Update a session (typically to close it with its observed stats).
+    
+    Args:
+        session_id: Session to update
+        end_time: Session end timestamp (ISO format)
+        avg_tok_s: Observed average tokens per second
+        total_tokens: Total tokens processed during the session
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE sessions
+                SET end_time = COALESCE(?, end_time),
+                    avg_tok_s = COALESCE(?, avg_tok_s),
+                    total_tokens = COALESCE(?, total_tokens)
+                WHERE id = ?""",
+            (end_time, avg_tok_s, total_tokens, session_id)
+        )
+        await db.commit()

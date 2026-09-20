@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import json
-from typing import Sequence
+from typing import Sequence, Optional
 from datetime import datetime
 
 from .store import insert_telemetry_sample
@@ -15,16 +15,18 @@ logger = logging.getLogger(__name__)
 class Sampler:
     """Sampler that collects telemetry data at a fixed interval."""
     
-    def __init__(self, sources: Sequence[TelemetrySource], interval: float = 1.0):
+    def __init__(self, sources: Sequence[TelemetrySource], interval: float = 1.0, session_tracker=None):
         """
         Initialize the sampler.
         
         Args:
             sources: Sequence of telemetry sources to collect from
             interval: Collection interval in seconds (default: 1.0)
+            session_tracker: Optional SessionTracker fed with llama stats each tick
         """
         self.sources = sources
         self.interval = interval
+        self.session_tracker = session_tracker
         self._running = False
         self._task = None
     
@@ -53,6 +55,9 @@ class Sampler:
             try:
                 sample = await self._collect_sample()
                 await insert_telemetry_sample(**sample)
+                if self.session_tracker is not None:
+                    stats = sample.get("llama_stats")
+                    await self.session_tracker.observe(json.loads(stats) if stats else None)
             except Exception as e:
                 logger.error(f"Error collecting sample: {e}")
             

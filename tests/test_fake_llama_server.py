@@ -7,7 +7,7 @@ from tests.fake_llama_server import FakeLLaMAServer
 
 @pytest.mark.asyncio
 async def test_fake_llama_server_metrics():
-    """Test fake LLaMA server /metrics endpoint."""
+    """Test fake LLaMA server /metrics endpoint uses real llama.cpp metric names."""
     server = FakeLLaMAServer(port=18081)
     await server.start()
     
@@ -17,8 +17,8 @@ async def test_fake_llama_server_metrics():
             
             assert response.status_code == 200
             assert "llamacpp:prompt_tokens_total" in response.text
-            assert "llamacpp:tokens_generated_total" in response.text
-            assert "llamacpp:speculative_accepts_total" in response.text
+            assert "llamacpp:tokens_predicted_total" in response.text
+            assert "llamacpp:spec_decode_num_accepted_tokens_total" in response.text
     finally:
         await server.stop()
 
@@ -42,9 +42,24 @@ async def test_fake_llama_server_increment():
             )
             assert response.status_code == 200
             
-            # Check incremented value
+            # Check incremented value (small values render as plain ints)
             response = await client.get(f"{server.url}/metrics")
             assert "llamacpp:prompt_tokens_total 100" in response.text
+    finally:
+        await server.stop()
+    
+    
+@pytest.mark.asyncio
+async def test_fake_llama_server_scientific_notation():
+    """Large counters render in Prometheus scientific notation like the real server."""
+    server = FakeLLaMAServer(port=18085)
+    await server.start()
+    
+    try:
+        server.set_counters({"prompt_tokens_total": 3_054_060})
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{server.url}/metrics")
+            assert "llamacpp:prompt_tokens_total 3.05406e+06" in response.text
     finally:
         await server.stop()
 

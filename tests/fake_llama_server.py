@@ -16,7 +16,8 @@ class FakeLLaMAServer:
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
         
-        # Initialize metrics counters
+        # Initialize metrics counters (API keys map to real llama.cpp
+        # Prometheus names in _format_metrics)
         self._counters = {
             "prompt_tokens_total": 0,
             "generated_tokens_total": 0,
@@ -33,21 +34,32 @@ class FakeLLaMAServer:
         """Return the base URL of the fake server."""
         return f"http://{self.host}:{self.port}"
     
+    # API counter key -> real llama.cpp Prometheus metric name
+    METRIC_NAMES = {
+        "prompt_tokens_total": "llamacpp:prompt_tokens_total",
+        "generated_tokens_total": "llamacpp:tokens_predicted_total",
+        "speculative_accepts_total": "llamacpp:spec_decode_num_accepted_tokens_total",
+    }
+    
+    @staticmethod
+    def _prom_value(value: int) -> str:
+        """Render a counter like Prometheus does: large values in scientific notation."""
+        if value >= 100_000:
+            return f"{value:.5e}"
+        return str(value)
+    
     def _format_metrics(self) -> str:
-        """Format metrics in Prometheus text format."""
-        lines = [
-            f'# HELP llamacpp_prompt_tokens_total Total number of prompt tokens processed\n'
-            f'# TYPE llamacpp_prompt_tokens_total counter\n'
-            f'llamacpp:prompt_tokens_total {self._counters["prompt_tokens_total"]}',
-            
-            f'# HELP llamacpp_tokens_generated_total Total number of tokens generated\n'
-            f'# TYPE llamacpp_tokens_generated_total counter\n'
-            f'llamacpp:tokens_generated_total {self._counters["generated_tokens_total"]}',
-            
-            f'# HELP llamacpp_speculative_accepts_total Total number of speculative tokens accepted\n'
-            f'# TYPE llamacpp_speculative_accepts_total counter\n'
-            f'llamacpp:speculative_accepts_total {self._counters["speculative_accepts_total"]}',
-        ]
+        """Format metrics in Prometheus text format using real llama.cpp names."""
+        helps = {
+            "prompt_tokens_total": "Total number of prompt tokens processed",
+            "generated_tokens_total": "Total number of tokens predicted (generated)",
+            "speculative_accepts_total": "Total number of speculative draft tokens accepted",
+        }
+        lines = []
+        for key, metric in self.METRIC_NAMES.items():
+            lines.append(f"# HELP {metric.replace(':', '_')} {helps[key]}")
+            lines.append(f"# TYPE {metric.replace(':', '_')} counter")
+            lines.append(f"{metric} {self._prom_value(self._counters[key])}")
         return "\n".join(lines) + "\n"
     
     async def handle_metrics(self, request: web.Request) -> web.Response:

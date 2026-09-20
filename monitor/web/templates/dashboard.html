@@ -190,6 +190,24 @@
                 </div>
             </div>
             
+            <!-- Token Speeds Card -->
+            <div class="card">
+                <h2>Token Speeds</h2>
+                {% set llama = latest.llama_stats | from_json if latest and latest.llama_stats else {} %}
+                <div class="metric">
+                    <span class="metric-label">Prompt tok/s</span>
+                    <span class="metric-value" id="tok-prompt">{{ llama.get('prompt_tokens_rate', 0) }}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Generation tok/s</span>
+                    <span class="metric-value" id="tok-generate">{{ llama.get('generated_tokens_rate', 0) }}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Speculative accepts/s</span>
+                    <span class="metric-value" id="tok-spec">{{ llama.get('speculative_accepts_rate', 0) }}</span>
+                </div>
+            </div>
+            
             <!-- Loaded Model Card -->
             <div class="card card-loaded-model">
                 <h2>Loaded Model</h2>
@@ -324,6 +342,27 @@
         
         // Check probes every 5 seconds
         setInterval(checkProbes, 5000);
+        
+        // Update token speeds every second
+        async function updateTokenSpeeds() {
+            try {
+                const response = await fetch('/api/telemetry/latest');
+                if (!response.ok) return;
+                const data = await response.json();
+                const stats = data.llama_stats ? JSON.parse(data.llama_stats) : null;
+                const set = (id, key, suffix) => {
+                    const el = document.getElementById(id);
+                    if (el) el.textContent = ((stats && stats[key]) || 0) + suffix;
+                };
+                set('tok-prompt', 'prompt_tokens_rate', ' tok/s');
+                set('tok-generate', 'generated_tokens_rate', ' tok/s');
+                set('tok-spec', 'speculative_accepts_rate', '/s');
+            } catch (err) {
+                // Silent fail
+            }
+        }
+        setInterval(updateTokenSpeeds, 1000);
+        updateTokenSpeeds();
     </script>
 </body>
 </html>

@@ -6,6 +6,7 @@ from typing import Any
 import psutil
 import httpx
 from .interface import MemorySource, GPUSource, ProcessSource, GPUMemorySource, LLaMAStatsSource
+from ..probes.server import ServerDetectorImpl
 
 
 class RealMemorySource(MemorySource):
@@ -129,69 +130,106 @@ class RealGPUMemorySource(GPUMemorySource):
 
 
 class RealLLaMAStatsSource(LLaMAStatsSource):
-    """Collect llama-server metrics from Prometheus endpoint."""
+    """Collect llama-server metrics from its Prometheus /metrics endpoint.
     
-    def __init__(self, host: str = "localhost", port: int = 8080, timeout: float = 5.0):
-        self.host = host
-        self.port = port
+    The llama-server is located via the probe process scan (its port is a
+    launch flag, unknowable from config), with a short cache to avoid
+    re-scanning the process table on every 1 Hz tick.
+    """
+    
+    DETECT_CACHE_SECONDS = 10.0
+    
+    def __init__(self, host: str = None, port: int = None, timeout: float = 2.0):
+        self.host = host  # None -> discovered from probes
+        self.port = port  # None -> discovered from probes
         self.timeout = timeout
         self._last_counters = None
+        self._detect_cache = None  # (monotonic_time, host, port)
+    
+    async def _resolve_target(self) -> tuple:
+        """Find the llama-server to poll: explicit override, else probe scan."""
+        if self.host and self.port:
+            return self.host, self.port
+        
+        now = asyncio.get_event_loop().time()
+        if self._detect_cache and now - self._detect_cache[0] < self.DETECT_CACHE_SECONDS:
+            return self._detect_cache[1], self._detect_cache[2]
+        
+        host, port = None, None
+        try:
+            servers = await ServerDetectorImpl().detect()
+            llama = next((s for s in servers if s.type == "llama-server" and s.port), None)
+            if llama:
+                host, port = "localhost", llama.port
+        except Exception:
+            pass
+        
+        self._detect_cache = (now, host, port)
+        return host, port
     
     async def collect(self) -> dict:
         """Collect llama-server metrics from /metrics endpoint.
         
         Returns:
-            dict with keys: prompt_tokens, generated_tokens, speculative_accepts
-            Each value is the cumulative counter value
+            dict with cumulative counters (prompt_tokens, generated_tokens,
+            speculative_accepts) and per-second rates (*_rate) computed by
+            differencing against the previous sample (1 Hz sampling).
         """
+        host, port = await self._resolve_target()
+        if not host or not port:
+            self._last_counters = None
+            return self._empty()
+        
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(f"http://{self.host}:{self.port}/metrics")
+                response = await client.get(f"http://{host}:{port}/metrics")
                 
                 if response.status_code == 200:
-                    metrics_text = response.text
-                    counters = self._parse_metrics(metrics_text)
+                    counters = self._parse_metrics(response.text)
                     
-                    # Calculate rates (diff from last sample)
                     result = counters.copy()
-                    
                     if self._last_counters:
-                        for key in ["prompt_tokens", "generated_tokens", "speculative_accepts"]:
-                            if key in counters and key in self._last_counters:
-                                delta = counters[key] - self._last_counters[key]
-                                # Rate per second (assuming 1 Hz sampling)
-                                result[f"{key}_rate"] = delta
+                        for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
+                            prev = self._last_counters.get(key, 0)
+                            delta = counters.get(key, 0) - prev
+                            # Clamp resets (server restart zeroes counters) to no-activity
+                            result[f"{key}_rate"] = max(0, delta)
                     
                     self._last_counters = counters
                     return result
         except Exception:
             pass
         
+        # Unreachable server: drop baseline so reconnection re-baselines cleanly
+        self._last_counters = None
+        return self._empty()
+    
+    @staticmethod
+    def _empty() -> dict:
         return {
             "prompt_tokens": 0,
             "generated_tokens": 0,
             "speculative_accepts": 0,
             "prompt_tokens_rate": 0,
             "generated_tokens_rate": 0,
-            "speculative_accepts_rate": 0
+            "speculative_accepts_rate": 0,
         }
     
     def _parse_metrics(self, metrics_text: str) -> dict:
-        """Parse Prometheus metrics text for llama-server counters."""
-        counters = {}
+        """Parse Prometheus metrics text for llama-server counters.
         
-        # Patterns for llama-server Prometheus metrics
+        Values may be rendered in scientific notation (e.g. 3.05406e+06),
+        so parse as float and convert to int.
+        """
         patterns = {
-            "prompt_tokens": r"llamacpp:prompt_tokens_total\s+(\d+)",
-            "generated_tokens": r"llamacpp:tokens_generated_total\s+(\d+)",
-            "speculative_accepts": r"llamacpp:speculative_accepts_total\s+(\d+)",
+            "prompt_tokens": r"llamacpp:prompt_tokens_total\s+([0-9.eE+\-]+)",
+            "generated_tokens": r"llamacpp:tokens_predicted_total\s+([0-9.eE+\-]+)",
+            "speculative_accepts": r"llamacpp:spec_decode_num_accepted_tokens_total\s+([0-9.eE+\-]+)",
         }
         
+        counters = {}
         for key, pattern in patterns.items():
             match = re.search(pattern, metrics_text)
-            if match:
-                counters[key] = int(match.group(1))
-            else:
-                counters[key] = 0
+            counters[key] = int(float(match.group(1))) if match else 0
         
         return counters

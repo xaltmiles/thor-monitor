@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitor Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            margin-bottom: 20px;
+            color: #00d4ff;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        .card h2 {
+            color: #00d4ff;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #1f3b6e;
+        }
+        
+        .metric:last-child {
+            border-bottom: none;
+        }
+        
+        .metric-label {
+            color: #888;
+        }
+        
+        .metric-value {
+            font-family: 'Fira Code', monospace;
+            font-size: 1.1em;
+            color: #00ff88;
+        }
+        
+        .metric-value.warning {
+            color: #ff6b6b;
+        }
+        
+        .update-time {
+            font-size: 0.85em;
+            color: #666;
+            text-align: right;
+            margin-top: 15px;
+        }
+        
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Monitor Dashboard</h1>
+        
+        <div class="grid">
+            <!-- Memory Card -->
+            <div class="card">
+                <h2>Unified Memory</h2>
+                <div id="memory-metrics">
+                    <div class="metric">
+                        <span class="metric-label">Total</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest %}
+                                {{ "%.2f" | format(latest.memory_total / 1e9) }} GB
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Free</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest %}
+                                {{ "%.2f" | format(latest.memory_free / 1e9) }} GB
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Used</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest %}
+                                {{ "%.2f" | format(latest.memory_used / 1e9) }} GB
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- GPU Card -->
+            <div class="card">
+                <h2>GPU</h2>
+                <div id="gpu-metrics">
+                    <div class="metric">
+                        <span class="metric-label">Utilization</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest and latest.gpu_util is not none %}
+                                {{ latest.gpu_util | int }}%
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Temperature</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest and latest.gpu_temp is not none %}
+                                {{ latest.gpu_temp | int }}°C
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Power</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest and latest.gpu_power is not none %}
+                                {{ latest.gpu_power | int }}W
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Process Info Card -->
+            <div class="card">
+                <h2>Processes</h2>
+                <div id="process-metrics">
+                    <div class="metric">
+                        <span class="metric-label">Count</span>
+                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                            {% if latest and latest.processes %}
+                                {{ latest.processes | length }}
+                            {% else %}
+                                <span class="loading">Loading...</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="update-time">
+            Last updated: {{ latest.timestamp if latest else 'N/A' }}
+        </div>
+    </div>
+    
+    <script>
+        // Auto-refresh metrics
+        document.addEventListener('htmx:configRequest', function(evt) {
+            evt.detail.headers['Cache-Control'] = 'no-cache';
+        });
+    </script>
+</body>
+</html>

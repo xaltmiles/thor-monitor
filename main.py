@@ -1,6 +1,6 @@
-def main():
-    print("Hello from monitor!")
+"""Monitor - LLM server monitoring tool."""
 
+from monitor.main import main
 
 if __name__ == "__main__":
     main()

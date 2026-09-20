@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            margin-bottom: 20px;
+            color: #00d4ff;
+        }
+        
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            margin-bottom: 20px;
+        }
+        
+        .card h2 {
+            color: #00d4ff;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            color: #888;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+        }
+        
+        .form-group input[type="number"],
+        .form-group input[type="range"] {
+            width: 100%;
+            padding: 10px;
+            background: #1a1a2e;
+            border: 1px solid #1f3b6e;
+            border-radius: 6px;
+            color: #eee;
+            font-size: 1em;
+        }
+        
+        .form-group input[type="range"] {
+            padding: 0;
+            height: 6px;
+            cursor: pointer;
+        }
+        
+        .form-group .value-display {
+            margin-top: 5px;
+            font-family: 'Fira Code', monospace;
+            color: #00ff88;
+            font-size: 0.9em;
+        }
+        
+        .form-group small {
+            display: block;
+            color: #666;
+            margin-top: 5px;
+            font-size: 0.8em;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            background: #00d4ff;
+            border: none;
+            border-radius: 6px;
+            color: #16213e;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background 0.2s;
+        }
+        
+        .btn:hover {
+            background: #00a8cc;
+        }
+        
+        .btn:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+        
+        .success {
+            background: #00ff88;
+            color: #16213e;
+        }
+        
+        .nav-links {
+            margin-bottom: 20px;
+        }
+        
+        .nav-links a {
+            color: #00d4ff;
+            text-decoration: none;
+            margin-right: 20px;
+            padding: 8px 16px;
+            border: 1px solid #1f3b6e;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        
+        .nav-links a:hover {
+            background: #1f3b6e;
+            text-decoration: none;
+        }
+        
+        .nav-links a.active {
+            background: #00d4ff;
+            color: #16213e;
+            border-color: #00d4ff;
+        }
+        
+        .save-message {
+            margin-top: 15px;
+            padding: 10px;
+            background: #1f3b6e;
+            border-radius: 6px;
+            color: #00ff88;
+            display: none;
+        }
+        
+        .save-message.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Settings</h1>
+        
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="/catalog/comparison">Catalog</a>
+            <a href="/catalog/timeline">Timeline</a>
+            <a href="/settings" class="active">Settings</a>
+        </div>
+        
+        <div id="settings-form" class="card">
+            <h2>Settings</h2>
+            <form id="settings-form-element">
+                <!-- Sampling Rate -->
+                <div class="form-group">
+                    <label for="sample_rate">Sampling Rate (Hz)</label>
+                    <input type="range" id="sample_rate" name="sample_rate" min="1" max="10" value="1" hx-post="/api/settings" hx-trigger="input" hx-swap="none">
+                    <div class="value-display"><span id="sample_rate_value">1</span> Hz</div>
+                    <small>How often to sample system telemetry</small>
+                </div>
+                
+                <!-- Standard Workload Duration -->
+                <div class="form-group">
+                    <label for="standard_workload_duration">Standard Workload Duration (seconds)</label>
+                    <input type="number" id="standard_workload_duration" name="standard_workload_duration" min="5" max="60" value="10" hx-post="/api/settings" hx-trigger="change" hx-swap="none">
+                    <div class="value-display"><span id="standard_workload_duration_value">10</span> seconds</div>
+                    <small>Short workload target duration for standard runs</small>
+                </div>
+                
+                <!-- Max Queue Wait -->
+                <div class="form-group">
+                    <label for="max_queue_wait">Max Queue Wait (seconds)</label>
+                    <input type="number" id="max_queue_wait" name="max_queue_wait" min="30" max="600" value="120" hx-post="/api/settings" hx-trigger="change" hx-swap="none">
+                    <div class="value-display"><span id="max_queue_wait_value">120</span> seconds</div>
+                    <small>Maximum time to wait for server to become idle before aborting</small>
+                </div>
+                
+                <!-- Warning GPU Temp -->
+                <div class="form-group">
+                    <label for="warning_gpu_temp">GPU Temperature Warning (°C)</label>
+                    <input type="number" id="warning_gpu_temp" name="warning_gpu_temp" min="70" max="100" step="0.5" value="85.0" hx-post="/api/settings" hx-trigger="change" hx-swap="none">
+                    <div class="value-display"><span id="warning_gpu_temp_value">85.0</span> °C</div>
+                    <small>Temperature above which warnings appear</small>
+                </div>
+                
+                <!-- Warning GPU Util -->
+                <div class="form-group">
+                    <label for="warning_gpu_util">GPU Utilization Warning (%)</label>
+                    <input type="number" id="warning_gpu_util" name="warning_gpu_util" min="80" max="100" step="0.5" value="95.0" hx-post="/api/settings" hx-trigger="change" hx-swap="none">
+                    <div class="value-display"><span id="warning_gpu_util_value">95.0</span> %</div>
+                    <small>Utilization above which warnings appear</small>
+                </div>
+                
+                <button type="button" id="save-btn" class="btn" onclick="saveSettings()">Save Settings</button>
+                <div id="save-message" class="save-message">Settings saved successfully</div>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+        // Load settings from API on page load
+        async function loadSettings() {
+            try {
+                const response = await fetch('/api/settings');
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Update form values
+                    document.getElementById('sample_rate').value = data.sample_rate || 1;
+                    document.getElementById('standard_workload_duration').value = data.standard_workload_duration || 10;
+                    document.getElementById('max_queue_wait').value = data.max_queue_wait || 120;
+                    document.getElementById('warning_gpu_temp').value = data.warning_gpu_temp || 85.0;
+                    document.getElementById('warning_gpu_util').value = data.warning_gpu_util || 95.0;
+                    
+                    // Update display values
+                    document.getElementById('sample_rate_value').textContent = data.sample_rate || 1;
+                    document.getElementById('standard_workload_duration_value').textContent = data.standard_workload_duration || 10;
+                    document.getElementById('max_queue_wait_value').textContent = data.max_queue_wait || 120;
+                    document.getElementById('warning_gpu_temp_value').textContent = data.warning_gpu_temp || 85.0;
+                    document.getElementById('warning_gpu_util_value').textContent = data.warning_gpu_util || 95.0;
+                }
+            } catch (err) {
+                console.error('Failed to load settings:', err);
+            }
+        }
+        
+        // Update display value when slider moves
+        document.getElementById('sample_rate').addEventListener('input', function() {
+            document.getElementById('sample_rate_value').textContent = this.value;
+        });
+        
+        // Update display values when inputs change
+        ['standard_workload_duration', 'max_queue_wait', 'warning_gpu_temp', 'warning_gpu_util'].forEach(function(id) {
+            document.getElementById(id).addEventListener('input', function() {
+                const displayId = id + '_value';
+                document.getElementById(displayId).textContent = this.value;
+            });
+        });
+        
+        // Save settings button handler
+        async function saveSettings() {
+            const btn = document.getElementById('save-btn');
+            const message = document.getElementById('save-message');
+            
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            
+            try {
+                const settings = {
+                    sample_rate: parseInt(document.getElementById('sample_rate').value),
+                    standard_workload_duration: parseInt(document.getElementById('standard_workload_duration').value),
+                    max_queue_wait: parseInt(document.getElementById('max_queue_wait').value),
+                    warning_gpu_temp: parseFloat(document.getElementById('warning_gpu_temp').value),
+                    warning_gpu_util: parseFloat(document.getElementById('warning_gpu_util').value)
+                };
+                
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(settings)
+                });
+                
+                if (response.ok) {
+                    message.classList.add('visible');
+                    btn.textContent = 'Saved!';
+                    
+                    setTimeout(() => {
+                        message.classList.remove('visible');
+                        btn.textContent = 'Save Settings';
+                        btn.disabled = false;
+                    }, 3000);
+                } else {
+                    const data = await response.json();
+                    alert('Failed to save settings: ' + (data.detail || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.textContent = 'Save Settings';
+                }
+            } catch (err) {
+                alert('Network error: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = 'Save Settings';
+            }
+        }
+        
+        // Load settings on page load
+        document.addEventListener('DOMContentLoaded', loadSettings);
+    </script>
+</body>
+</html>

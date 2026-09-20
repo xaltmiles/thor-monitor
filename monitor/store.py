@@ -142,6 +142,11 @@ async def init_db():
                 warning_gpu_util REAL DEFAULT 95.0
             )
         """)
+        
+        # Insert default settings row if not exists
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (id, sample_rate, standard_workload_duration, max_queue_wait, warning_gpu_temp, warning_gpu_util) VALUES (1, 1, 10, 120, 85.0, 95.0)"
+        )
         await db.commit()
         
         # Migration: check for and add missing columns to benchmark_runs
@@ -647,3 +652,71 @@ async def get_benchmark_runs(limit: int = 100) -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+async def get_settings() -> Optional[dict]:
+    """Get current settings.
+    
+    Returns:
+        Settings dict with all config values, or None if no settings exist.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM settings WHERE id = 1") as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def update_settings(
+    sample_rate: int = None,
+    standard_workload_duration: int = None,
+    max_queue_wait: int = None,
+    warning_gpu_temp: float = None,
+    warning_gpu_util: float = None
+) -> Optional[dict]:
+    """Update settings. Only provided parameters are updated.
+    
+    Args:
+        sample_rate: Sampling rate in Hz
+        standard_workload_duration: Standard short workload duration in seconds
+        max_queue_wait: Maximum time to wait for server to drain in seconds
+        warning_gpu_temp: GPU temperature warning threshold in Celsius
+        warning_gpu_util: GPU utilization warning threshold in percent
+        
+    Returns:
+        Updated settings dict, or None if no settings exist
+    """
+    # Build UPDATE clause dynamically
+    updates = []
+    values = []
+    
+    if sample_rate is not None:
+        updates.append("sample_rate = ?")
+        values.append(sample_rate)
+    if standard_workload_duration is not None:
+        updates.append("standard_workload_duration = ?")
+        values.append(standard_workload_duration)
+    if max_queue_wait is not None:
+        updates.append("max_queue_wait = ?")
+        values.append(max_queue_wait)
+    if warning_gpu_temp is not None:
+        updates.append("warning_gpu_temp = ?")
+        values.append(warning_gpu_temp)
+    if warning_gpu_util is not None:
+        updates.append("warning_gpu_util = ?")
+        values.append(warning_gpu_util)
+    
+    if not updates:
+        # No updates, just fetch current
+        return await get_settings()
+    
+    values.append(1)  # WHERE id = 1
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            f"UPDATE settings SET {', '.join(updates)} WHERE id = ?",
+            values
+        )
+        await db.commit()
+    
+    return await get_settings()

@@ -310,6 +310,46 @@ def create_app():
             return {"run": run}
         raise HTTPException(status_code=404, detail="Run not found")
     
+    @app.get("/api/settings")
+    async def api_get_settings():
+        """Get current settings."""
+        from ..store import get_settings
+        
+        settings = await get_settings()
+        if settings is None:
+            # Return defaults if no settings exist
+            return {
+                "sample_rate": 1,
+                "standard_workload_duration": 10,
+                "max_queue_wait": 120,
+                "warning_gpu_temp": 85.0,
+                "warning_gpu_util": 95.0
+            }
+        return settings
+    
+    @app.post("/api/settings")
+    async def api_update_settings(request: Request):
+        """Update settings."""
+        from ..store import update_settings
+        
+        data = await request.json()
+        
+        settings = await update_settings(
+            sample_rate=data.get("sample_rate"),
+            standard_workload_duration=data.get("standard_workload_duration"),
+            max_queue_wait=data.get("max_queue_wait"),
+            warning_gpu_temp=data.get("warning_gpu_temp"),
+            warning_gpu_util=data.get("warning_gpu_util")
+        )
+        
+        return settings
+    
+    @app.get("/settings", response_class=HTMLResponse)
+    async def settings_page():
+        """Render the settings page."""
+        content = await render_template("settings.html", {})
+        return HTMLResponse(content=content)
+    
     return app
 
 

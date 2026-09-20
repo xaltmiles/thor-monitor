@@ -76,7 +76,15 @@ async def init_db():
                 ttft REAL,
                 prompt_tok_s REAL,
                 gen_tok_s REAL,
+                peak_gen_tok_s REAL,
                 concurrent_throughput REAL,
+                model_name TEXT,
+                model_quant TEXT,
+                context_length INTEGER,
+                server_type TEXT,
+                server_port INTEGER,
+                workload_params TEXT,
+                tags TEXT,
                 memory_before TEXT,
                 memory_during TEXT,
                 memory_after TEXT,
@@ -109,6 +117,75 @@ async def init_db():
             )
         """)
         await db.commit()
+        
+        # Migration: check for and add missing columns to benchmark_runs
+        cursor = await db.execute("PRAGMA table_info(benchmark_runs)")
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+        
+        if "peak_gen_tok_s" not in column_names:
+            logger.info("Adding peak_gen_tok_s column to benchmark_runs")
+            await db.execute("""
+                ALTER TABLE benchmark_runs 
+                ADD COLUMN peak_gen_tok_s REAL
+            """)
+            await db.commit()
+        
+        if "model_name" not in column_names:
+            logger.info("Adding model_name column to benchmark_runs")
+            await db.execute("""
+                ALTER TABLE benchmark_runs 
+                ADD COLUMN model_name TEXT
+            """)
+            await db.commit()
+        
+        if "model_quant" not in column_names:
+            logger.info("Adding model_quant column to benchmark_runs")
+            await db.execute("""
+                ALTER TABLE benchmark_runs 
+                ADD COLUMN model_quant TEXT
+            """)
+            await db.commit()
+        
+        if "context_length" not in column_names:
+            logger.info("Adding context_length column to benchmark_runs")
+            await db.execute("""
+                ALTER TABLE benchmark_runs 
+                ADD COLUMN context_length INTEGER
+            """)
+            await db.commit()
+        
+        if "server_type" not in column_names:
+            logger.info("Adding server_type column to benchmark_runs")
+            await db.execute("""
+                ALTER TABLE benchmark_runs 
+                ADD COLUMN server_type TEXT
+            """)
+            await db.commit()
+        
+        if "workload_params" not in column_names:
+            logger.info("Adding workload_params column to benchmark_runs")
+            await db.execute("""
+                ALTER TABLE benchmark_runs 
+                ADD COLUMN workload_params TEXT
+            """)
+            await db.commit()
+        
+        if "tags" not in column_names:
+            logger.info("Adding tags column to benchmark_runs")
+            await db.execute("""
+                ALTER TABLE benchmark_runs 
+                ADD COLUMN tags TEXT
+            """)
+            await db.commit()
+        
+        if "server_port" not in column_names:
+            logger.info("Adding server_port column to benchmark_runs")
+            await db.execute("""
+                ALTER TABLE benchmark_runs 
+                ADD COLUMN server_port INTEGER
+            """)
+            await db.commit()
 
 
 async def insert_telemetry_sample(
@@ -363,3 +440,168 @@ async def update_session(
             (end_time, avg_tok_s, total_tokens, session_id)
         )
         await db.commit()
+
+
+async def insert_benchmark_run(
+    model_id: int,
+    workload_type: str,
+    standard_run: bool,
+    total_time: float = None,
+    ttft: float = None,
+    prompt_tok_s: float = None,
+    gen_tok_s: float = None,
+    peak_gen_tok_s: float = None,
+    concurrent_throughput: float = None,
+    model_name: str = None,
+    model_quant: str = None,
+    context_length: int = None,
+    server_type: str = None,
+    workload_params: str = None,
+    tags: str = None,
+    memory_before: str = None,
+    memory_during: str = None,
+    memory_after: str = None,
+    gpu_before: str = None,
+    gpu_during: str = None,
+    gpu_after: str = None
+) -> int:
+    """Insert a benchmark run into the database.
+    
+    Args:
+        model_id: ID of the model being benchmarked
+        workload_type: Type of workload (e.g., 'standard', 'custom')
+        standard_run: Whether this is a standard run
+        total_time: Total time to complete the workload in seconds
+        ttft: Time to first token in seconds
+        prompt_tok_s: Prompt processing rate in tokens/second
+        gen_tok_s: Generation rate in tokens/second
+        peak_gen_tok_s: Peak generation rate in tokens/second
+        concurrent_throughput: Concurrent throughput in tokens/second
+        model_name: Name of the model
+        model_quant: Quantization type
+        context_length: Context length in tokens
+        server_type: Type of server (ollama, llama-server)
+        workload_params: JSON string of workload parameters
+        tags: Comma-separated tags (e.g., 'standard,short-workload')
+        memory_before: JSON string of memory samples before run
+        memory_during: JSON string of memory samples during run
+        memory_after: JSON string of memory samples after run
+        gpu_before: JSON string of GPU samples before run
+        gpu_during: JSON string of GPU samples during run
+        gpu_after: JSON string of GPU samples after run
+        
+    Returns:
+        Benchmark run ID
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO benchmark_runs 
+                (model_id, workload_type, standard_run, total_time, ttft,
+                 prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
+                 model_name, model_quant, context_length, server_type,
+                 workload_params, tags,
+                 memory_before, memory_during, memory_after,
+                 gpu_before, gpu_during, gpu_after, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (model_id, workload_type, standard_run, total_time, ttft,
+             prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
+             model_name, model_quant, context_length, server_type,
+             workload_params, tags,
+             memory_before, memory_during, memory_after,
+             gpu_before, gpu_during, gpu_after,
+             datetime.now(timezone.utc).isoformat())
+        )
+        await db.commit()
+        
+        # Return the inserted ID
+        async with db.execute(
+            "SELECT id FROM benchmark_runs ORDER BY id DESC LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+
+async def update_benchmark_run(
+    run_id: int,
+    total_time: float = None,
+    ttft: float = None,
+    prompt_tok_s: float = None,
+    gen_tok_s: float = None,
+    peak_gen_tok_s: float = None,
+    concurrent_throughput: float = None,
+    memory_during: str = None,
+    gpu_during: str = None,
+    memory_after: str = None,
+    gpu_after: str = None
+) -> None:
+    """Update a benchmark run (typically to update with final metrics and after-run samples).
+    
+    Args:
+        run_id: Benchmark run to update
+        total_time: Total time to complete the workload in seconds
+        ttft: Time to first token in seconds
+        prompt_tok_s: Prompt processing rate in tokens/second
+        gen_tok_s: Generation rate in tokens/second
+        peak_gen_tok_s: Peak generation rate in tokens/second
+        concurrent_throughput: Concurrent throughput in tokens/second
+        memory_during: JSON string of memory samples during run
+        gpu_during: JSON string of GPU samples during run
+        memory_after: JSON string of memory samples after run
+        gpu_after: JSON string of GPU samples after run
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE benchmark_runs
+                SET total_time = COALESCE(?, total_time),
+                    ttft = COALESCE(?, ttft),
+                    prompt_tok_s = COALESCE(?, prompt_tok_s),
+                    gen_tok_s = COALESCE(?, gen_tok_s),
+                    peak_gen_tok_s = COALESCE(?, peak_gen_tok_s),
+                    concurrent_throughput = COALESCE(?, concurrent_throughput),
+                    memory_during = COALESCE(?, memory_during),
+                    gpu_during = COALESCE(?, gpu_during),
+                    memory_after = COALESCE(?, memory_after),
+                    gpu_after = COALESCE(?, gpu_after)
+                WHERE id = ?""",
+            (total_time, ttft, prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
+             memory_during, gpu_during, memory_after, gpu_after, run_id)
+        )
+        await db.commit()
+
+
+async def get_benchmark_run(run_id: int) -> Optional[dict]:
+    """Get a specific benchmark run.
+    
+    Args:
+        run_id: ID of the benchmark run
+        
+    Returns:
+        Benchmark run info dict or None if not found
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM benchmark_runs WHERE id = ?",
+            (run_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def get_benchmark_runs(limit: int = 100) -> list[dict]:
+    """Get recent benchmark runs.
+    
+    Args:
+        limit: Maximum number of runs to return
+        
+    Returns:
+        List of benchmark run info dicts
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM benchmark_runs ORDER BY created_at DESC LIMIT ?",
+            (limit,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]

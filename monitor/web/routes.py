@@ -54,12 +54,17 @@ def create_app():
         latest = await get_latest_telemetry()
         history = await get_telemetry_history(limit=60)  # Last 60 samples (1 minute)
         
+        # Get loaded models from probes
+        from ..probes import run_probes
+        probes_result = await run_probes()
+        
         # Convert to list for template (Jinja2 has issues with dict in template context)
         history_list = list(history) if history else []
         
         content = await render_template("dashboard.html", {
             "latest": latest,
             "history": history_list,
+            "models": probes_result,
         })
         return HTMLResponse(content=content)
     
@@ -158,6 +163,63 @@ def create_app():
             "generated_tokens_rate": 5.0,
             "speculative_accepts_rate": 0.5
         }
+    
+    # Benchmark API endpoints
+    @app.post("/api/benchmarks/start")
+    async def api_benchmarks_start():
+        """Start a new benchmark run."""
+        from ..benchmarks import BenchmarkRunner
+        
+        runner = BenchmarkRunner()
+        try:
+            run = await runner.trigger_run()
+            return {
+                "status": "started",
+                "run": run.to_dict()
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }, 500
+    
+    @app.get("/api/benchmarks/status")
+    async def api_benchmarks_status():
+        """Get current benchmark run status."""
+        from ..benchmarks import BenchmarkRunner
+        
+        runner = BenchmarkRunner()
+        run = await runner.get_status()
+        
+        if run:
+            return {
+                "status": run.state,
+                "run": run.to_dict()
+            }
+        else:
+            return {
+                "status": "idle",
+                "run": None
+            }
+    
+    @app.get("/api/benchmarks/runs")
+    async def api_benchmarks_runs(limit: int = 10):
+        """Get recent benchmark runs."""
+        from ..store import get_benchmark_runs
+        
+        runs = await get_benchmark_runs(limit=limit)
+        return {"runs": runs}
+    
+    @app.get("/api/benchmarks/run/{run_id}")
+    async def api_benchmarks_run(run_id: int):
+        """Get a specific benchmark run."""
+        from ..store import get_benchmark_run
+        
+        run = await get_benchmark_run(run_id)
+        if run:
+            return {"run": run}
+        else:
+            return {"error": "Run not found"}, 404
     
     return app
 

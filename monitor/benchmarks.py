@@ -1,0 +1,460 @@
+"""Benchmark runner - orchestrates benchmark runs against detected LLM servers."""
+
+import asyncio
+import json
+import time
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
+import httpx
+
+from .store import (
+    init_db, insert_benchmark_run, update_benchmark_run, get_benchmark_run,
+    get_loaded_model, insert_model
+)
+from .probes import ServerDetectorImpl, ModelDetectorImpl, run_probes
+from .telemetry.real import RealMemorySource, RealGPUSource, RealGPUMemorySource
+from .telemetry.interface import TelemetrySource
+
+
+class BenchmarkState:
+    """States for the benchmark run state machine."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    ABORTED = "aborted"
+
+
+class BenchmarkRun:
+    """Represents a benchmark run with its state and metrics."""
+    
+    def __init__(
+        self,
+        run_id: int,
+        model_name: str,
+        server_type: str,
+        server_port: int,
+        state: str = BenchmarkState.QUEUED,
+        ttft: Optional[float] = None,
+        peak_gen_tok_s: Optional[float] = None,
+        total_time: Optional[float] = None,
+        abort_reason: Optional[str] = None
+    ):
+        self.run_id = run_id
+        self.model_name = model_name
+        self.server_type = server_type
+        self.server_port = server_port
+        self.state = state
+        self.ttft = ttft
+        self.peak_gen_tok_s = peak_gen_tok_s
+        self.total_time = total_time
+        self.abort_reason = abort_reason
+        self.started_at: Optional[float] = None
+        self.finished_at: Optional[float] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for API response."""
+        return {
+            "id": self.run_id,
+            "model_name": self.model_name,
+            "server_type": self.server_type,
+            "server_port": self.server_port,
+            "state": self.state,
+            "ttft": self.ttft,
+            "peak_gen_tok_s": self.peak_gen_tok_s,
+            "total_time": self.total_time,
+            "abort_reason": self.abort_reason,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+        }
+
+
+class BenchmarkRunner:
+    """Runner for benchmark workloads against detected LLM servers.
+    
+    State machine: queued -> running -> done | aborted(reason)
+    One run at a time; subsequent triggers return current run status.
+    
+    Queue-until-idle: Poll server's active-request gauge every 2s while queued;
+    timeout at max_queue_wait seconds with explanatory abort.
+    """
+    
+    def __init__(
+        self,
+        max_queue_wait: int = 120,  # 2 minutes
+        queue_poll_interval: float = 2.0,
+        server_detector: Optional[ServerDetectorImpl] = None,
+        model_detector: Optional[ModelDetectorImpl] = None
+    ):
+        self.max_queue_wait = max_queue_wait
+        self.queue_poll_interval = queue_poll_interval
+        self.server_detector = server_detector or ServerDetectorImpl()
+        self.model_detector = model_detector or ModelDetectorImpl()
+        
+        self._current_run: Optional[BenchmarkRun] = None
+        self._lock = asyncio.Lock()
+        self._run_task: Optional[asyncio.Task] = None
+        
+        # Telemetry sources for footprint sampling
+        self._memory_source = RealMemorySource()
+        self._gpu_source = RealGPUSource()
+        self._gpu_memory_source = RealGPUMemorySource()
+    
+    async def get_status(self) -> Optional[BenchmarkRun]:
+        """Get current benchmark run status.
+        
+        Returns:
+            Current BenchmarkRun if one exists, None otherwise
+        """
+        async with self._lock:
+            return self._current_run
+    
+    async def start_run(
+        self,
+        workload_type: str = "standard",
+        max_tokens: int = 512,
+        prompt_tokens: int = 64,
+        tag: str = "standard"
+    ) -> BenchmarkRun:
+        """Start a new benchmark run.
+        
+        Args:
+            workload_type: Type of workload (e.g., 'standard', 'custom')
+            max_tokens: Maximum tokens to generate
+            prompt_tokens: Approximate prompt length in tokens
+            tag: Tag for the run (e.g., 'standard', 'custom')
+            
+        Returns:
+            The BenchmarkRun being started or current run if one is active
+        """
+        async with self._lock:
+            if self._current_run and self._current_run.state in (
+                BenchmarkState.QUEUED, BenchmarkState.RUNNING
+            ):
+                # Return current run if one is active
+                return self._current_run
+            
+            # Detect server and model
+            servers = await self.server_detector.detect()
+            llama_servers = [s for s in servers if s.type == "llama-server" and s.port]
+            
+            if not llama_servers:
+                raise RuntimeError("No llama-server detected")
+            
+            server = llama_servers[0]
+            
+            # Get model info
+            models = await self.model_detector.detect([server])
+            if not models:
+                raise RuntimeError(f"No model detected for {server.name}")
+            
+            model = models[0]
+            
+            # Insert model if not exists (for historical runs)
+            model_id = await insert_model(
+                name=model.name,
+                quant=model.quant,
+                context_length=model.context_length,
+                server_type=model.server_type or server.type,
+                file_size=model.file_size
+            )
+            
+            # Create benchmark run record (initial state: queued)
+            workload_params = json.dumps({
+                "workload_type": workload_type,
+                "max_tokens": max_tokens,
+                "prompt_tokens": prompt_tokens,
+                "tag": tag
+            })
+            
+            run_id = await insert_benchmark_run(
+                model_id=model_id,
+                workload_type=workload_type,
+                standard_run=(tag == "standard"),
+                model_name=model.name,
+                model_quant=model.quant,
+                context_length=model.context_length,
+                server_type=server.type,
+                server_port=server.port,
+                workload_params=workload_params,
+                tags=tag
+            )
+            
+            self._current_run = BenchmarkRun(
+                run_id=run_id,
+                model_name=model.name,
+                server_type=server.type,
+                server_port=server.port,
+                state=BenchmarkState.QUEUED
+            )
+            
+            return self._current_run
+    
+    async def _run_benchmark(self, run: BenchmarkRun, workload_params: Dict[str, Any]) -> None:
+        """Execute the benchmark run logic (queued -> running -> done/aborted).
+        
+        This is the core async task that runs the benchmark.
+        """
+        try:
+            # Phase 1: Queue until idle (or timeout)
+            run.started_at = time.time()
+            await self._queue_until_idle(run)
+            
+            if run.state == BenchmarkState.ABORTED:
+                return
+            
+            # Phase 2: Run workload
+            run.state = BenchmarkState.RUNNING
+            
+            # Update run to running state
+            await update_benchmark_run(run_id=run.run_id)
+            
+            # Sample footprint before run
+            footprint_before = await self._sample_footprint()
+            
+            # Run the actual workload
+            workload_start = time.time()
+            ttft, peak_gen_tok_s = await self._run_workload(
+                run.server_port,
+                max_tokens=workload_params.get("max_tokens", 512)
+            )
+            
+            workload_total = time.time() - workload_start
+            
+            # Sample footprint during run (continuously during generation)
+            footprint_during = await self._sample_footprint()
+            
+            # Sample footprint after run
+            await asyncio.sleep(1)  # Brief wait for settling
+            footprint_after = await self._sample_footprint()
+            
+            # Update run with final metrics
+            peak_gen_tok_s = peak_gen_tok_s or 0
+            gen_tok_s = workload_params.get("max_tokens", 512) / workload_total if workload_total > 0 else 0
+            
+            await update_benchmark_run(
+                run_id=run.run_id,
+                total_time=workload_total,
+                ttft=ttft,
+                gen_tok_s=gen_tok_s,
+                peak_gen_tok_s=peak_gen_tok_s,
+                memory_during=json.dumps(footprint_during.get("memory", {})),
+                memory_after=json.dumps(footprint_after.get("memory", {})),
+                gpu_during=json.dumps(footprint_during.get("gpu", {})),
+                gpu_after=json.dumps(footprint_after.get("gpu", {}))
+            )
+            
+            run.state = BenchmarkState.DONE
+            run.ttft = ttft
+            run.peak_gen_tok_s = peak_gen_tok_s
+            run.total_time = workload_total
+            run.finished_at = time.time()
+            
+        except Exception as e:
+            run.state = BenchmarkState.ABORTED
+            run.abort_reason = f"Unexpected error: {str(e)}"
+            run.finished_at = time.time()
+            await update_benchmark_run(
+                run_id=run.run_id,
+                memory_after=json.dumps({"error": str(e)})
+            )
+    
+    async def _queue_until_idle(self, run: BenchmarkRun) -> None:
+        """Wait until server has no active requests or timeout.
+        
+        Polls the llamacpp:requests_processing gauge every queue_poll_interval.
+        Times out at max_queue_wait seconds.
+        """
+        start_time = time.time()
+        
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            while True:
+                elapsed = time.time() - start_time
+                
+                # Check timeout
+                if elapsed > self.max_queue_wait:
+                    run.state = BenchmarkState.ABORTED
+                    run.abort_reason = (
+                        f"Server busy - active requests did not drain within "
+                        f"{self.max_queue_wait}s timeout"
+                    )
+                    return
+                
+                try:
+                    response = await client.get(
+                        f"http://localhost:{run.server_port}/metrics",
+                        timeout=5.0
+                    )
+                    
+                    if response.status_code == 200:
+                        metrics = response.text
+                        
+                        # Parse active requests from metrics
+                        active_requests = self._parse_active_requests(metrics)
+                        
+                        if active_requests == 0:
+                            # Server is idle
+                            return
+                        
+                        # Log and continue waiting
+                        await asyncio.sleep(self.queue_poll_interval)
+                        
+                except httpx.RequestError as e:
+                    run.state = BenchmarkState.ABORTED
+                    run.abort_reason = (
+                        f"Server unreachable while queued: {str(e)}"
+                    )
+                    return
+    
+    async def _run_workload(self, port: int, max_tokens: int) -> tuple:
+        """Run the actual benchmark workload against the OpenAI-compatible endpoint.
+        
+        Sends a small prompt, measures time to first token and peak generation rate.
+        Returns (ttft, peak_gen_tok_s).
+        """
+        # Create a small prompt (we'll estimate token count)
+        prompt_text = "Once upon a time in a digital realm, there was a model that could generate"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            request = {
+                "model": "benchmark-model",
+                "messages": [
+                    {"role": "user", "content": prompt_text}
+                ],
+                "max_tokens": max_tokens,
+                "stream": True
+            }
+            
+            ttft = None
+            tokens_generated = 0
+            chunk_times: List[float] = []
+            last_chunk_time = None
+            
+            request_start_time = time.time()
+            
+            try:
+                async with client.stream("POST", f"http://localhost:{port}/v1/chat/completions", json=request) as response:
+                    response.raise_for_status()
+                    
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        
+                        if line.strip() == "data: [DONE]":
+                            break
+                        
+                        try:
+                            chunk = json.loads(line[6:])  # Skip "data: " prefix
+                        except json.JSONDecodeError:
+                            continue
+                        
+                        # Get chunk timestamp
+                        chunk_time = time.time()
+                        
+                        if ttft is None and chunk.get("choices"):
+                            # First chunk - capture TTFT
+                            ttft = chunk_time - request_start_time
+                            chunk_times.append(ttft)
+                        
+                        # Track generation rate
+                        if ttft is not None:
+                            tokens_in_chunk = self._count_tokens_in_chunk(chunk)
+                            if tokens_in_chunk > 0:
+                                if last_chunk_time is not None:
+                                    delta_time = chunk_time - last_chunk_time
+                                    if delta_time > 0:
+                                        tok_s = tokens_in_chunk / delta_time
+                                        chunk_times.append(tok_s)
+                                last_chunk_time = chunk_time
+                                tokens_generated += tokens_in_chunk
+                        
+                    # Calculate peak generation rate
+                    peak_gen_tok_s = max(chunk_times) if chunk_times else 0
+                    
+                    return ttft or 0, peak_gen_tok_s
+                    
+            except httpx.RequestError as e:
+                return 0, 0
+    
+    def _parse_active_requests(self, metrics_text: str) -> int:
+        """Parse the llamacpp:requests_processing gauge from metrics text."""
+        for line in metrics_text.split("\n"):
+            if line.startswith("llamacpp:requests_processing"):
+                try:
+                    return int(float(line.split()[-1]))
+                except (ValueError, IndexError):
+                    return 0
+        return 0
+    
+    def _count_tokens_in_chunk(self, chunk: Dict[str, Any]) -> int:
+        """Count tokens in a chunk from the streaming response."""
+        try:
+            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            if "content" in delta:
+                content = delta["content"]
+                if content and content != "[DONE]":
+                    # Rough token count: 1 token ≈ 4 chars
+                    return len(content) // 4
+        except (IndexError, KeyError):
+            pass
+        
+        # Check usage field
+        usage = chunk.get("usage", {})
+        completion_tokens = usage.get("completion_tokens", 0)
+        if completion_tokens > 0:
+            return completion_tokens
+        
+        return 0
+    
+    async def _sample_footprint(self) -> Dict[str, Dict[str, Any]]:
+        """Sample memory and GPU footprint.
+        
+        Returns:
+            Dict with 'memory' and 'gpu' keys containing sample data
+        """
+        memory_data = await self._memory_source.collect()
+        gpu_data = await self._gpu_source.collect()
+        gpu_memory_data = await self._gpu_memory_source.collect()
+        
+        return {
+            "memory": memory_data,
+            "gpu": {**gpu_data, "processes": gpu_memory_data.get("gpu_processes", [])}
+        }
+    
+    async def trigger_run(
+        self,
+        workload_type: str = "standard",
+        max_tokens: int = 512,
+        prompt_tokens: int = 64,
+        tag: str = "standard"
+    ) -> BenchmarkRun:
+        """Trigger a new benchmark run.
+        
+        Returns the current BenchmarkRun (either newly created or existing).
+        If a run is already queued/running, returns that run instead of starting a new one.
+        """
+        async with self._lock:
+            # Check if a run is already active
+            if self._current_run and self._current_run.state in (
+                BenchmarkState.QUEUED, BenchmarkState.RUNNING
+            ):
+                return self._current_run
+            
+            # Start new run
+            run = await self.start_run(
+                workload_type=workload_type,
+                max_tokens=max_tokens,
+                prompt_tokens=prompt_tokens,
+                tag=tag
+            )
+            
+            # Start the run task
+            workload_params = {
+                "workload_type": workload_type,
+                "max_tokens": max_tokens,
+                "prompt_tokens": prompt_tokens,
+                "tag": tag
+            }
+            
+            self._run_task = asyncio.create_task(self._run_benchmark(run, workload_params))
+            
+            return run

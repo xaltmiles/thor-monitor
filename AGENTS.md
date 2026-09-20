@@ -1,5 +1,9 @@
 # Agent Skills
 
+## Bounded commands
+
+Run anything that can block as a bounded command — `timeout 120 <cmd>` — long test runs, servers, network calls, file watchers, anything that reads until EOF. A hung command blocks all further work. `pytest` is already self-bounding: pytest-timeout fails any test at 60s (see pyproject.toml).
+
 ## Smoke test before closing
 
 Closing evidence for any ticket is `make smoke` plus the unit suite: the smoke test starts the real app, drives real HTTP and the real SQLite store, and fails on any break that fixtures mask (unwired sources, broken imports, dead real-system paths). A ticket whose only evidence is pytest is not done.

@@ -20,6 +20,11 @@ monitor = "monitor.main:cli"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.pytest.ini_options]
+# Any test hanging longer than this fails instead of blocking the suite/agent.
+timeout = 60
+timeout_method = "signal"
+
 [tool.hatch.build.targets.wheel]
 packages = ["monitor"]
 
@@ -29,4 +34,5 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "httpx>=0.28.0",
     "aiohttp>=3.9.0",
+    "pytest-timeout>=2.4.0",
 ]

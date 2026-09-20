@@ -13,6 +13,7 @@ from monitor.store import init_db
 from monitor.telemetry import RealMemorySource, RealGPUSource, RealProcessSource, RealGPUMemorySource, RealLLaMAStatsSource
 from monitor.sampler import Sampler
 from monitor.sessions import SessionTracker
+from monitor.benchmarks import BenchmarkRunner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,6 +46,9 @@ async def main():
     
     # Start sampler in background
     sampler_task = asyncio.create_task(sampler.start())
+    
+    # Initialize benchmark runner
+    benchmark_runner = BenchmarkRunner()
     
     # Start web server
     logger.info("Starting web server on 0.0.0.0:8000...")

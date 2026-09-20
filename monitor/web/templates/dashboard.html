@@ -301,6 +301,36 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Benchmark Card -->
+            <div class="card">
+                <h2>Benchmark Run</h2>
+                <div id="benchmark-status" class="metric">
+                    <span class="metric-label">Status</span>
+                    <span class="metric-value" id="benchmark-status-value">Idle</span>
+                </div>
+                <div id="benchmark-stats">
+                    <div class="metric">
+                        <span class="metric-label">TTFT</span>
+                        <span class="metric-value" id="benchmark-ttft">-</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Peak tok/s</span>
+                        <span class="metric-value" id="benchmark-peak-tok-s">-</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Total time</span>
+                        <span class="metric-value" id="benchmark-total-time">-</span>
+                    </div>
+                </div>
+                <button id="benchmark-start-btn" 
+                        hx-post="/api/benchmarks/start" 
+                        hx-swap="none"
+                        style="margin-top: 15px; padding: 10px 20px; background: #00d4ff; border: none; border-radius: 6px; color: #16213e; font-weight: bold; cursor: pointer; width: 100%;">
+                    Start Benchmark
+                </button>
+                <div id="benchmark-error" style="margin-top: 10px; color: #ff6b6b; font-size: 0.9em; display: none;"></div>
+            </div>
         </div>
         
         <div class="update-time">
@@ -363,6 +393,84 @@
         }
         setInterval(updateTokenSpeeds, 1000);
         updateTokenSpeeds();
+        
+        // Update benchmark status every 2 seconds
+        async function updateBenchmarkStatus() {
+            try {
+                const response = await fetch('/api/benchmarks/status');
+                if (!response.ok) return;
+                const data = await response.json();
+                
+                const statusEl = document.getElementById('benchmark-status-value');
+                const ttftEl = document.getElementById('benchmark-ttft');
+                const peakTokSEl = document.getElementById('benchmark-peak-tok-s');
+                const totalTimeEl = document.getElementById('benchmark-total-time');
+                const errorEl = document.getElementById('benchmark-error');
+                
+                const run = data.run;
+                
+                if (run) {
+                    // Update status
+                    statusEl.textContent = run.state;
+                    statusEl.className = run.state === 'aborted' ? 'metric-value warning' : 
+                                        run.state === 'running' ? 'metric-value' : 'metric-value';
+                    
+                    // Update stats if available
+                    if (run.ttft !== null && run.ttft !== undefined) {
+                        ttftEl.textContent = run.ttft.toFixed(3) + ' s';
+                    }
+                    if (run.peak_gen_tok_s !== null && run.peak_gen_tok_s !== undefined) {
+                        peakTokSEl.textContent = run.peak_gen_tok_s.toFixed(1) + ' tok/s';
+                    }
+                    if (run.total_time !== null && run.total_time !== undefined) {
+                        totalTimeEl.textContent = run.total_time.toFixed(1) + ' s';
+                    }
+                    
+                    // Show error if aborted
+                    if (run.state === 'aborted' && run.abort_reason) {
+                        errorEl.textContent = 'Aborted: ' + run.abort_reason;
+                        errorEl.style.display = 'block';
+                    } else {
+                        errorEl.style.display = 'none';
+                    }
+                } else {
+                    statusEl.textContent = 'Idle';
+                    statusEl.className = 'metric-value';
+                }
+            } catch (err) {
+                // Silent fail
+            }
+        }
+        setInterval(updateBenchmarkStatus, 2000);
+        updateBenchmarkStatus();
+        
+        // Handle benchmark start button click
+        document.getElementById('benchmark-start-btn').addEventListener('click', async function() {
+            const btn = this;
+            const errorEl = document.getElementById('benchmark-error');
+            
+            btn.disabled = true;
+            btn.textContent = 'Starting...';
+            errorEl.style.display = 'none';
+            
+            try {
+                const response = await fetch('/api/benchmarks/start', {
+                    method: 'POST'
+                });
+                
+                if (!response.ok) {
+                    const data = await response.json();
+                    errorEl.textContent = data.message || 'Failed to start benchmark';
+                    errorEl.style.display = 'block';
+                }
+            } catch (err) {
+                errorEl.textContent = 'Network error: ' + err.message;
+                errorEl.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Start Benchmark';
+            }
+        });
     </script>
 </body>
 </html>

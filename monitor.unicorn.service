@@ -1,0 +1,20 @@
+[Unit]
+Description=Monitor - LLM serving dashboard
+Documentation=https://github.com/xaltmiles/thor-monitor
+After=network.target
+
+[Service]
+Type=simple
+User=eqr
+Group=eqr
+WorkingDirectory=/home/eqr/dev/monitor
+ExecStart=/usr/bin/uv run monitor
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

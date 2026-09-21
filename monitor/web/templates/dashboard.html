@@ -135,7 +135,7 @@
                     <!-- GPU Utilization, Temp, Power -->
                     <div class="metric">
                         <span class="metric-label">Utilization</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                        <span class="metric-value" id="gpu-util">
                             {% if latest and latest.gpu_util is not none %}
                                 {{ latest.gpu_util | int }}%
                             {% else %}
@@ -145,7 +145,7 @@
                     </div>
                     <div class="metric">
                         <span class="metric-label">Temperature</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                        <span class="metric-value" id="gpu-temp">
                             {% if latest and latest.gpu_temp is not none %}
                                 {{ latest.gpu_temp | int }}°C
                             {% else %}
@@ -155,7 +155,7 @@
                     </div>
                     <div class="metric">
                         <span class="metric-label">Power</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                        <span class="metric-value" id="gpu-power">
                             {% if latest and latest.gpu_power is not none %}
                                 {{ latest.gpu_power | int }}W
                             {% else %}
@@ -285,7 +285,7 @@
                 <div id="memory-metrics">
                     <div class="metric">
                         <span class="metric-label">Total</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                        <span class="metric-value" id="mem-total">
                             {% if latest %}
                                 {{ "%.2f" | format(latest.memory_total / 1e9) }} GB
                             {% else %}
@@ -295,7 +295,7 @@
                     </div>
                     <div class="metric">
                         <span class="metric-label">Free</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                        <span class="metric-value" id="mem-free">
                             {% if latest %}
                                 {{ "%.2f" | format(latest.memory_free / 1e9) }} GB
                             {% else %}
@@ -305,7 +305,7 @@
                     </div>
                     <div class="metric">
                         <span class="metric-label">Used</span>
-                        <span class="metric-value" hx-get="/api/telemetry/latest" hx-trigger="every 1s" hx-swap="outerHTML">
+                        <span class="metric-value" id="mem-used">
                             {% if latest %}
                                 {{ "%.2f" | format(latest.memory_used / 1e9) }} GB
                             {% else %}
@@ -472,6 +472,51 @@
         }
         setInterval(updateTokenSpeeds, 1000);
         updateTokenSpeeds();
+        
+        // Update telemetry spans (GPU and Memory) every second
+        async function updateTelemetrySpans() {
+            try {
+                const response = await fetch('/api/telemetry/latest');
+                if (!response.ok) return;
+                const data = await response.json();
+                
+                if (!data) return;
+                
+                // Format GPU metrics
+                const gpuUtilEl = document.getElementById('gpu-util');
+                const gpuTempEl = document.getElementById('gpu-temp');
+                const gpuPowerEl = document.getElementById('gpu-power');
+                
+                if (gpuUtilEl && data.gpu_util !== null && data.gpu_util !== undefined) {
+                    gpuUtilEl.textContent = Math.round(data.gpu_util) + '%';
+                }
+                if (gpuTempEl && data.gpu_temp !== null && data.gpu_temp !== undefined) {
+                    gpuTempEl.textContent = Math.round(data.gpu_temp) + '°C';
+                }
+                if (gpuPowerEl && data.gpu_power !== null && data.gpu_power !== undefined) {
+                    gpuPowerEl.textContent = Math.round(data.gpu_power) + 'W';
+                }
+                
+                // Format memory metrics (GB with 1 decimal)
+                const memTotalEl = document.getElementById('mem-total');
+                const memFreeEl = document.getElementById('mem-free');
+                const memUsedEl = document.getElementById('mem-used');
+                
+                if (memTotalEl && data.memory_total !== null && data.memory_total !== undefined) {
+                    memTotalEl.textContent = (data.memory_total / 1e9).toFixed(1) + ' GB';
+                }
+                if (memFreeEl && data.memory_free !== null && data.memory_free !== undefined) {
+                    memFreeEl.textContent = (data.memory_free / 1e9).toFixed(1) + ' GB';
+                }
+                if (memUsedEl && data.memory_used !== null && data.memory_used !== undefined) {
+                    memUsedEl.textContent = (data.memory_used / 1e9).toFixed(1) + ' GB';
+                }
+            } catch (err) {
+                // Silent fail
+            }
+        }
+        setInterval(updateTelemetrySpans, 1000);
+        updateTelemetrySpans();
         
         // Update benchmark status and progress every 2 seconds
         async function updateBenchmarkStatus() {

@@ -150,3 +150,26 @@ async def test_api_probes_detect(test_client):
     assert "servers" in data
     assert "models" in data
     assert "warning" in data
+
+
+@pytest.mark.asyncio
+async def test_no_htmx_json_dump_pattern_in_template():
+    """Test that dashboard template has no hx-swap='outerHTML' on telemetry endpoints."""
+    import re
+    from pathlib import Path
+    
+    # Read the dashboard template
+    template_path = Path(__file__).parent.parent / "monitor" / "web" / "templates" / "dashboard.html"
+    content = template_path.read_text()
+    
+    # Check that no hx-swap='outerHTML' appears on any hx-get for /api/telemetry endpoints
+    # Pattern: hx-get="/api/telemetry/..." ... hx-swap="outerHTML"
+    pattern = r'hx-get=["\']/(?:api/telemetry/[^"\']*)["\'][^>]*hx-swap=["\']outerHTML["\']'
+    matches = re.findall(pattern, content)
+    
+    assert matches == [], (
+        f"Found {len(matches)} problematic htmx patterns in dashboard.html. "
+        "hx-swap='outerHTML' should not be used on /api/telemetry endpoints "
+        "as they return raw JSON that would be rendered as text. "
+        f"Matches: {matches}"
+    )

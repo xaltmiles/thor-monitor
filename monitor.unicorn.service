@@ -8,7 +8,7 @@ Type=simple
 User=eqr
 Group=eqr
 WorkingDirectory=/home/eqr/dev/monitor
-ExecStart=/usr/bin/uv run monitor
+ExecStart=/home/eqr/.local/bin/uv run monitor
 Restart=on-failure
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1

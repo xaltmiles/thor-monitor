@@ -169,6 +169,32 @@ async def test_sessions_detected_and_stored(test_db):
 
 
 @pytest.mark.asyncio
+async def test_session_tracker_fractional_rates(test_db):
+    """Fractional tok/s rates are accumulated as floats and rounded once at persistence."""
+    await init_db()
+    tracker = SessionTracker(model_name="test-model", idle_timeout=0.2)
+    
+    # Feed 10 samples of 4.7 tok/s each = 47.0 total
+    # With int() on each sample: 10 × 4 = 40 (wrong - truncates)
+    # With float accumulation + round at end: 47 (correct)
+    for _ in range(10):
+        await tracker.observe({"generated_tokens_rate": 4.7, "prompt_tokens_rate": 0.3})
+    
+    # Idle: after the idle timeout the session closes with stats
+    await asyncio.sleep(0.3)
+    await tracker.observe({"generated_tokens_rate": 0, "prompt_tokens_rate": 0})
+    
+    assert await get_active_session() is None
+    history = await get_sessions_history()
+    assert len(history) == 1
+    session = history[0]
+    assert session["end_time"] is not None
+    # Total should be rounded: 10 × (4.7 + 0.3) = 50.0 → 50
+    assert session["total_tokens"] == 50
+    assert session["avg_tok_s"] is not None and session["avg_tok_s"] > 0
+
+
+@pytest.mark.asyncio
 async def test_no_session_without_activity(test_db):
     """No tokens moving -> no session rows."""
     await init_db()

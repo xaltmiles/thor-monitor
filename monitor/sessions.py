@@ -34,8 +34,8 @@ class SessionTracker:
         self._session_id: Optional[int] = None
         self._start_monotonic: Optional[float] = None
         self._last_activity_monotonic: Optional[float] = None
-        self._tokens_generated: int = 0
-        self._tokens_prompt: int = 0
+        self._tokens_generated: float = 0.0
+        self._tokens_prompt: float = 0.0
     
     async def observe(self, stats: Optional[dict], server_type: str = "llama-server") -> None:
         """Feed one telemetry sample into the tracker.
@@ -62,8 +62,8 @@ class SessionTracker:
             if self._session_id is None:
                 await self._open(stats, now, server_type)
             self._last_activity_monotonic = now
-            self._tokens_generated += int(gen_rate)
-            self._tokens_prompt += int(prompt_rate)
+            self._tokens_generated += gen_rate
+            self._tokens_prompt += prompt_rate
         
         await self._maybe_close(now)
     
@@ -79,8 +79,8 @@ class SessionTracker:
         )
         self._start_monotonic = now
         self._last_activity_monotonic = now
-        self._tokens_generated = 0
-        self._tokens_prompt = 0
+        self._tokens_generated = 0.0
+        self._tokens_prompt = 0.0
         logger.info("Session opened (id=%s, model=%s, server_type=%s)", self._session_id, self.model_name, server_type)
     
     async def _maybe_close(self, now: float) -> None:
@@ -95,11 +95,14 @@ class SessionTracker:
         avg_tok_s = (self._tokens_generated / duration) if duration > 0 else None
         total = self._tokens_generated + self._tokens_prompt
         
+        # Round totals to int only when persisting, not during accumulation
+        total_int = round(total)
+        
         await update_session(
             self._session_id,
             end_time=datetime.now(timezone.utc).isoformat(),
             avg_tok_s=round(avg_tok_s, 2) if avg_tok_s is not None else None,
-            total_tokens=total,
+            total_tokens=total_int,
         )
         logger.info(
             "Session closed (id=%s, %.1fs, %d tok, avg %s tok/s)",
@@ -108,5 +111,5 @@ class SessionTracker:
         self._session_id = None
         self._start_monotonic = None
         self._last_activity_monotonic = None
-        self._tokens_generated = 0
-        self._tokens_prompt = 0
+        self._tokens_generated = 0.0
+        self._tokens_prompt = 0.0

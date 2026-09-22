@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from collections import deque
 from typing import Any
 import psutil
 import httpx
@@ -139,13 +140,16 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
     
     DETECT_CACHE_SECONDS = 10.0
     
-    def __init__(self, host: str = None, port: int = None, timeout: float = 2.0):
+    def __init__(self, host: str = None, port: int = None, timeout: float = 2.0, window_seconds: float = 10.0):
         self.host = host  # None -> discovered from probes
         self.port = port  # None -> discovered from probes
         self.timeout = timeout
         self._last_counters = None
         self._last_timestamp = None  # monotonic timestamp of last collect
         self._detect_cache = None  # (monotonic_time, host, port)
+        self._window_seconds = window_seconds
+        # deque of (monotonic_ts, counters_dict) to track rolling window
+        self._counter_window = deque(maxlen=int(10 * window_seconds))  # ~10 samples/sec * window_seconds
     
     async def _resolve_target(self) -> tuple:
         """Find the llama-server to poll: explicit override, else probe scan."""
@@ -173,8 +177,9 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
         
         Returns:
             dict with cumulative counters (prompt_tokens, generated_tokens,
-            speculative_accepts) and per-second rates (*_rate) computed by
-            differencing against the previous sample, normalized to per-second.
+            speculative_accepts), per-second rates (*_rate) computed by
+            differencing against the previous sample, normalized to per-second,
+            and averaged rates (*_rate_avg) computed over the rolling window.
         """
         host, port = await self._resolve_target()
         if not host or not port:
@@ -192,6 +197,10 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
                     counters = self._parse_metrics(response.text)
                     
                     result = counters.copy()
+                    
+                    # Track counter window for rolling average
+                    self._counter_window.append((current_time, counters.copy()))
+                    
                     if self._last_counters and self._last_timestamp is not None:
                         elapsed = current_time - self._last_timestamp
                         for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
@@ -207,6 +216,9 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
                         for key in ("prompt_tokens_rate", "generated_tokens_rate", "speculative_accepts_rate"):
                             result[key] = 0
                     
+                    # Compute rolling window averages
+                    result.update(self._compute_averages(current_time, counters))
+                    
                     self._last_counters = counters
                     self._last_timestamp = current_time
                     return result
@@ -218,6 +230,42 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
         self._last_timestamp = None
         return self._empty()
     
+    def _compute_averages(self, current_time: float, counters: dict) -> dict:
+        """Compute rolling window averages for token rates.
+        
+        Returns dict with *_rate_avg keys computed as counter delta across
+        the window divided by elapsed time.
+        """
+        result = {}
+        
+        # Find the oldest sample within the window
+        window_start_time = current_time - self._window_seconds
+        window_samples = [(t, c) for t, c in self._counter_window if t >= window_start_time]
+        
+        if len(window_samples) < 2:
+            # Not enough samples for averaging
+            for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
+                result[f"{key}_rate_avg"] = 0.0
+            return result
+        
+        # Get first and last samples in window
+        first_time, first_counters = window_samples[0]
+        last_time, last_counters = window_samples[-1]
+        
+        elapsed = last_time - first_time
+        if elapsed <= 0:
+            # Same timestamp, no rate can be computed
+            for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
+                result[f"{key}_rate_avg"] = 0.0
+            return result
+        
+        # Compute delta across the window
+        for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
+            delta = last_counters.get(key, 0) - first_counters.get(key, 0)
+            result[f"{key}_rate_avg"] = delta / elapsed
+        
+        return result
+    
     @staticmethod
     def _empty() -> dict:
         return {
@@ -227,6 +275,9 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
             "prompt_tokens_rate": 0,
             "generated_tokens_rate": 0,
             "speculative_accepts_rate": 0,
+            "prompt_tokens_rate_avg": 0.0,
+            "generated_tokens_rate_avg": 0.0,
+            "speculative_accepts_rate_avg": 0.0,
         }
     
     def _parse_metrics(self, metrics_text: str) -> dict:
@@ -267,19 +318,23 @@ class RealOllamaStatsSource(OllamaStatsSource):
         "/var/log/services/ollama.log",
     ]
     
-    def __init__(self, log_path: str = None):
+    def __init__(self, log_path: str = None, window_seconds: float = 10.0):
         self._log_path = log_path
         self._last_prompt_tokens = 0
         self._last_generated_tokens = 0
         self._last_timestamp = None  # monotonic timestamp of last collect
+        self._window_seconds = window_seconds
+        # deque of (monotonic_ts, counters_dict) to track rolling window
+        self._counter_window = deque(maxlen=int(10 * window_seconds))  # ~10 samples/sec * window_seconds
     
     async def collect(self) -> dict:
         """Collect ollama stats from debug logs.
         
         Returns:
             dict with namespaced keys: ollama_prompt_tokens, ollama_generated_tokens,
-            ollama_prompt_tokens_rate, ollama_generated_tokens_rate
-            Each value is the cumulative counter value
+            ollama_prompt_tokens_rate, ollama_generated_tokens_rate,
+            ollama_prompt_tokens_rate_avg, ollama_generated_tokens_rate_avg
+            Each value is the cumulative counter value or rate
         """
         prompt_tokens = 0
         generated_tokens = 0
@@ -322,6 +377,13 @@ class RealOllamaStatsSource(OllamaStatsSource):
         
         current_time = asyncio.get_event_loop().time()
         
+        # Track counter window for rolling average
+        counters = {
+            "prompt_tokens": prompt_tokens,
+            "generated_tokens": generated_tokens
+        }
+        self._counter_window.append((current_time, counters))
+        
         # Compute rates by differencing against previous sample, normalized to per-second
         if self._last_timestamp is not None:
             elapsed = current_time - self._last_timestamp
@@ -341,12 +403,49 @@ class RealOllamaStatsSource(OllamaStatsSource):
         self._last_generated_tokens = generated_tokens
         self._last_timestamp = current_time
         
+        # Compute rolling window averages
+        rate_avg = self._compute_ollama_averages(current_time, counters)
+        
         return {
             "ollama_prompt_tokens": prompt_tokens,
             "ollama_generated_tokens": generated_tokens,
             "ollama_prompt_tokens_rate": prompt_rate,
             "ollama_generated_tokens_rate": gen_rate,
+            "ollama_prompt_tokens_rate_avg": rate_avg["prompt"],
+            "ollama_generated_tokens_rate_avg": rate_avg["generated"],
         }
+    
+    def _compute_ollama_averages(self, current_time: float, counters: dict) -> dict:
+        """Compute rolling window averages for ollama token rates.
+        
+        Returns dict with rate_avg keys computed as counter delta across
+        the window divided by elapsed time.
+        """
+        result = {"prompt": 0.0, "generated": 0.0}
+        
+        # Find the oldest sample within the window
+        window_start_time = current_time - self._window_seconds
+        window_samples = [(t, c) for t, c in self._counter_window if t >= window_start_time]
+        
+        if len(window_samples) < 2:
+            # Not enough samples for averaging
+            return result
+        
+        # Get first and last samples in window
+        first_time, first_counters = window_samples[0]
+        last_time, last_counters = window_samples[-1]
+        
+        elapsed = last_time - first_time
+        if elapsed <= 0:
+            # Same timestamp, no rate can be computed
+            return result
+        
+        # Compute delta across the window
+        for key in ("prompt", "generated"):
+            delta = last_counters.get(f"{key}_tokens", 0) - first_counters.get(f"{key}_tokens", 0)
+            result[key] = delta / elapsed
+        
+        return result
     
     def _read_log_file(self, log_path: str) -> str:
         """Read and return log file contents.
@@ -366,4 +465,6 @@ class RealOllamaStatsSource(OllamaStatsSource):
             "ollama_generated_tokens": 0,
             "ollama_prompt_tokens_rate": 0,
             "ollama_generated_tokens_rate": 0,
+            "ollama_prompt_tokens_rate_avg": 0.0,
+            "ollama_generated_tokens_rate_avg": 0.0,
         }

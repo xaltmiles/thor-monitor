@@ -122,3 +122,51 @@ class TestRealOllamaStatsSource:
             assert data["ollama_generated_tokens"] == 0
         finally:
             os.unlink(log_path)
+
+    @pytest.mark.asyncio
+    async def test_ollama_rolling_window_average(self):
+        """Ollama rolling window average should compute delta across window / elapsed time."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
+            f.write("2024/01/01 12:00:00 llama_new_context: n_tokens = 64\n")
+            f.write("2024/01/01 12:00:01 llama_token = 1234\n")
+            log_path = f.name
+
+        try:
+            source = RealOllamaStatsSource(log_path=log_path, window_seconds=3.0)
+            
+            # First sample
+            first = await source.collect()
+            assert first["ollama_prompt_tokens_rate_avg"] == 0.0
+            assert first["ollama_generated_tokens_rate_avg"] == 0.0
+            
+            # Add more tokens
+            with open(log_path, 'a') as f:
+                f.write("2024/01/01 12:00:02 llama_token = 5678\n")
+            
+            # Wait 1 second
+            await asyncio.sleep(1.0)
+            
+            # Second sample - 1 generated token in 1 second = 1 tok/s
+            second = await source.collect()
+            assert 0.5 < second["ollama_generated_tokens_rate_avg"] < 1.5
+            
+            # Wait another 2 seconds (total 3 seconds in window)
+            await asyncio.sleep(2.0)
+            
+            # Third sample - no new tokens, rate across window should be ~0
+            third = await source.collect()
+            assert third["ollama_generated_tokens_rate_avg"] < 0.5  # Very small rate
+            
+            # Add more tokens
+            with open(log_path, 'a') as f:
+                f.write("2024/01/01 12:00:03 llama_token = 9012\n")
+            
+            # Wait 0.5 second
+            await asyncio.sleep(0.5)
+            
+            # Fourth sample - 1 token in 0.5 seconds = 2 tok/s
+            # Allow more tolerance since window spans the entire 3 seconds
+            fourth = await source.collect()
+            assert 0.1 < fourth["ollama_generated_tokens_rate_avg"] < 1.5
+        finally:
+            os.unlink(log_path)

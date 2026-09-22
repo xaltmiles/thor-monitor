@@ -269,6 +269,60 @@ async def test_ollama_rates_at_0_5_hz_interval(test_db):
 
 
 @pytest.mark.asyncio
+async def test_llama_rolling_window_average(test_db):
+    """Rolling window average should compute delta across window / elapsed time."""
+    async with FakeLLaMAServer(port=18096) as server:
+        source = RealLLaMAStatsSource(host="127.0.0.1", port=server.port, window_seconds=3.0)
+        
+        # First sample - baseline
+        first = await source.collect()
+        assert first["prompt_tokens"] == 0
+        assert first["generated_tokens_rate_avg"] == 0.0
+        
+        # Increment counters
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{server.url}/metrics/inc",
+                json={"increments": {"prompt_tokens_total": 100, "generated_tokens_total": 50}},
+            )
+        
+        # Wait 1 second
+        await asyncio.sleep(1.0)
+        
+        # Second sample
+        second = await source.collect()
+        assert second["prompt_tokens"] == 100
+        # Rate should be around 100 tok/s for prompt (window average)
+        assert 80 < second["prompt_tokens_rate_avg"] < 120
+        assert 40 < second["generated_tokens_rate_avg"] < 60
+        
+        # Wait another 2 seconds (total 3 seconds in window)
+        await asyncio.sleep(2.0)
+        
+        # Third sample - counters stay at same values
+        third = await source.collect()
+        # Rate across 3-second window with no new tokens should be ~0
+        assert third["prompt_tokens_rate_avg"] < 5  # Very small rate due to no new tokens
+        assert third["generated_tokens_rate_avg"] < 5
+        
+        # Add more tokens
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{server.url}/metrics/inc",
+                json={"increments": {"prompt_tokens_total": 200, "generated_tokens_total": 100}},
+            )
+        
+        # Wait 0.5 second
+        await asyncio.sleep(0.5)
+        
+        # Fourth sample - now we have delta across part of the window
+        fourth = await source.collect()
+        # In 0.5 seconds with 100 prompt tokens added: should be ~200 tok/s
+        # Allow more tolerance since window spans the entire 3 seconds
+        assert 50 < fourth["prompt_tokens_rate_avg"] < 250
+
+
+@pytest.mark.asyncio
 async def test_ollama_rates_at_2_hz_interval(test_db):
     """Ollama rate calculation at 2 Hz (0.5 second interval) should give delta*2."""
     # Create a temporary log file

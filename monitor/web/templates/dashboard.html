@@ -202,16 +202,17 @@
                 {% set llama = latest.llama_stats | from_json if latest and latest.llama_stats else {} %}
                 <div class="metric">
                     <span class="metric-label">Prompt tok/s</span>
-                    <span class="metric-value" id="tok-prompt">{{ llama.get('prompt_tokens_rate', 0) }}</span>
+                    <span class="metric-value" id="tok-prompt">{{ llama.get('prompt_tokens_rate_avg', 0) | round(1) }}</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">Generation tok/s</span>
-                    <span class="metric-value" id="tok-generate">{{ llama.get('generated_tokens_rate', 0) }}</span>
+                    <span class="metric-value" id="tok-generate">{{ llama.get('generated_tokens_rate_avg', 0) | round(1) }}</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">Speculative accepts/s</span>
-                    <span class="metric-value" id="tok-spec">{{ llama.get('speculative_accepts_rate', 0) }}</span>
+                    <span class="metric-value" id="tok-spec">{{ llama.get('speculative_accepts_rate_avg', 0) | round(1) }}</span>
                 </div>
+                <div id="tok-last-rate" style="margin-top: 10px; font-size: 0.9em; color: #666; text-align: right;"></div>
             </div>
             
             <!-- Loaded Model Card -->
@@ -452,36 +453,64 @@
         setInterval(checkGPUGetWarning, 2000);
         checkGPUGetWarning();
         
-        // Update token speeds every second
-        async function updateTokenSpeeds() {
+        // Track last non-zero token rates for idle state display
+        let lastNonZeroRates = {
+            prompt: null,
+            generate: null,
+            spec: null
+        };
+        let lastNonZeroTime = null;
+        
+        // Shared 1-second poller for token speeds and telemetry spans
+        async function updateMetrics() {
             try {
                 const response = await fetch('/api/telemetry/latest');
                 if (!response.ok) return;
                 const data = await response.json();
                 const stats = data.llama_stats ? JSON.parse(data.llama_stats) : null;
-                const set = (id, key, suffix) => {
+                
+                // Update token speeds with averaged rates and idle state
+                const updateTokenSpeed = (id, key, label, lastId) => {
                     const el = document.getElementById(id);
-                    if (el) el.textContent = ((stats && stats[key]) || 0) + suffix;
+                    if (!el) return;
+                    
+                    // Use rate_avg if available, otherwise fall back to rate
+                    let rate = stats ? (stats[key + '_avg'] ?? stats[key]) : 0;
+                    let isZero = !rate || rate === 0 || rate < 0.05;
+                    
+                    if (isZero) {
+                        // Idle state
+                        el.textContent = 'idle';
+                        el.style.color = '#666';
+                        
+                        // Track last non-zero rate for display
+                        if (lastNonZeroRates[lastId] !== null && lastNonZeroTime) {
+                            const lastEl = document.getElementById('tok-last-rate');
+                            if (lastEl) {
+                                const age = Math.round((Date.now() - lastNonZeroTime) / 1000);
+                                lastEl.textContent = `Last: ${lastNonZeroRates[lastId]} tok/s · ${age}s ago`;
+                            }
+                        }
+                    } else {
+                        // Active state - show rate with one decimal
+                        el.textContent = rate.toFixed(1) + ' tok/s';
+                        el.style.color = '#00ff88';
+                        
+                        // Update last non-zero tracking
+                        lastNonZeroRates[lastId] = rate.toFixed(1);
+                        lastNonZeroTime = Date.now();
+                        
+                        // Clear last rate display when active
+                        const lastEl = document.getElementById('tok-last-rate');
+                        if (lastEl) lastEl.textContent = '';
+                    }
                 };
-                set('tok-prompt', 'prompt_tokens_rate', ' tok/s');
-                set('tok-generate', 'generated_tokens_rate', ' tok/s');
-                set('tok-spec', 'speculative_accepts_rate', '/s');
-            } catch (err) {
-                // Silent fail
-            }
-        }
-        setInterval(updateTokenSpeeds, 1000);
-        updateTokenSpeeds();
-        
-        // Update telemetry spans (GPU and Memory) every second
-        async function updateTelemetrySpans() {
-            try {
-                const response = await fetch('/api/telemetry/latest');
-                if (!response.ok) return;
-                const data = await response.json();
                 
-                if (!data) return;
+                updateTokenSpeed('tok-prompt', 'prompt_tokens_rate', 'prompt', 'prompt');
+                updateTokenSpeed('tok-generate', 'generated_tokens_rate', 'generate', 'generate');
+                updateTokenSpeed('tok-spec', 'speculative_accepts_rate', 'spec', 'spec');
                 
+                // Update telemetry spans (GPU and Memory)
                 // Format GPU metrics
                 const gpuUtilEl = document.getElementById('gpu-util');
                 const gpuTempEl = document.getElementById('gpu-temp');
@@ -515,8 +544,8 @@
                 // Silent fail
             }
         }
-        setInterval(updateTelemetrySpans, 1000);
-        updateTelemetrySpans();
+        setInterval(updateMetrics, 1000);
+        updateMetrics();
         
         // Update benchmark status and progress every 2 seconds
         async function updateBenchmarkStatus() {

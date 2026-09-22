@@ -3,11 +3,49 @@
 import asyncio
 import re
 from collections import deque
-from typing import Any
+from typing import Any, Tuple, Dict
 import psutil
 import httpx
 from .interface import MemorySource, GPUSource, ProcessSource, GPUMemorySource, LLaMAStatsSource, OllamaStatsSource
 from ..probes.server import ServerDetectorImpl
+
+
+def _compute_window_averages(window_samples: list, current_time: float, counter_keys: Tuple[str, ...]) -> Dict[str, float]:
+    """Compute rolling window averages for token rates.
+    
+    Returns dict with *{key}_rate_avg keys computed as counter delta across
+    the window divided by elapsed time.
+    
+    Args:
+        window_samples: List of (timestamp, counters_dict) tuples
+        current_time: Current monotonic timestamp
+        counter_keys: Tuple of key names to average (e.g., ("prompt_tokens", "generated_tokens"))
+    """
+    result: Dict[str, float] = {}
+    
+    if len(window_samples) < 2:
+        # Not enough samples for averaging
+        for key in counter_keys:
+            result[f"{key}_rate_avg"] = 0.0
+        return result
+    
+    # Get first and last samples in window
+    first_time, first_counters = window_samples[0]
+    last_time, last_counters = window_samples[-1]
+    
+    elapsed = last_time - first_time
+    if elapsed <= 0:
+        # Same timestamp, no rate can be computed
+        for key in counter_keys:
+            result[f"{key}_rate_avg"] = 0.0
+        return result
+    
+    # Compute delta across the window
+    for key in counter_keys:
+        delta = last_counters.get(key, 0) - first_counters.get(key, 0)
+        result[f"{key}_rate_avg"] = delta / elapsed
+    
+    return result
 
 
 class RealMemorySource(MemorySource):
@@ -149,7 +187,8 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
         self._detect_cache = None  # (monotonic_time, host, port)
         self._window_seconds = window_seconds
         # deque of (monotonic_ts, counters_dict) to track rolling window
-        self._counter_window = deque(maxlen=int(10 * window_seconds))  # ~10 samples/sec * window_seconds
+        # ~1 sample/sec * window_seconds (window_seconds of 10 = 10 samples)
+        self._counter_window = deque(maxlen=int(window_seconds))
     
     async def _resolve_target(self) -> tuple:
         """Find the llama-server to poll: explicit override, else probe scan."""
@@ -230,41 +269,20 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
         self._last_timestamp = None
         return self._empty()
     
+
+    
     def _compute_averages(self, current_time: float, counters: dict) -> dict:
         """Compute rolling window averages for token rates.
         
         Returns dict with *_rate_avg keys computed as counter delta across
         the window divided by elapsed time.
         """
-        result = {}
-        
         # Find the oldest sample within the window
         window_start_time = current_time - self._window_seconds
         window_samples = [(t, c) for t, c in self._counter_window if t >= window_start_time]
         
-        if len(window_samples) < 2:
-            # Not enough samples for averaging
-            for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
-                result[f"{key}_rate_avg"] = 0.0
-            return result
-        
-        # Get first and last samples in window
-        first_time, first_counters = window_samples[0]
-        last_time, last_counters = window_samples[-1]
-        
-        elapsed = last_time - first_time
-        if elapsed <= 0:
-            # Same timestamp, no rate can be computed
-            for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
-                result[f"{key}_rate_avg"] = 0.0
-            return result
-        
-        # Compute delta across the window
-        for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
-            delta = last_counters.get(key, 0) - first_counters.get(key, 0)
-            result[f"{key}_rate_avg"] = delta / elapsed
-        
-        return result
+        counter_keys = ("prompt_tokens", "generated_tokens", "speculative_accepts")
+        return _compute_window_averages(window_samples, current_time, counter_keys)
     
     @staticmethod
     def _empty() -> dict:
@@ -325,7 +343,8 @@ class RealOllamaStatsSource(OllamaStatsSource):
         self._last_timestamp = None  # monotonic timestamp of last collect
         self._window_seconds = window_seconds
         # deque of (monotonic_ts, counters_dict) to track rolling window
-        self._counter_window = deque(maxlen=int(10 * window_seconds))  # ~10 samples/sec * window_seconds
+        # ~1 sample/sec * window_seconds (window_seconds of 10 = 10 samples)
+        self._counter_window = deque(maxlen=int(window_seconds))
     
     async def collect(self) -> dict:
         """Collect ollama stats from debug logs.
@@ -421,31 +440,15 @@ class RealOllamaStatsSource(OllamaStatsSource):
         Returns dict with rate_avg keys computed as counter delta across
         the window divided by elapsed time.
         """
-        result = {"prompt": 0.0, "generated": 0.0}
-        
         # Find the oldest sample within the window
         window_start_time = current_time - self._window_seconds
         window_samples = [(t, c) for t, c in self._counter_window if t >= window_start_time]
         
-        if len(window_samples) < 2:
-            # Not enough samples for averaging
-            return result
+        counter_keys = ("prompt_tokens", "generated_tokens")
+        averages = _compute_window_averages(window_samples, current_time, counter_keys)
         
-        # Get first and last samples in window
-        first_time, first_counters = window_samples[0]
-        last_time, last_counters = window_samples[-1]
-        
-        elapsed = last_time - first_time
-        if elapsed <= 0:
-            # Same timestamp, no rate can be computed
-            return result
-        
-        # Compute delta across the window
-        for key in ("prompt", "generated"):
-            delta = last_counters.get(f"{key}_tokens", 0) - first_counters.get(f"{key}_tokens", 0)
-            result[key] = delta / elapsed
-        
-        return result
+        # Map from key_rate_avg to short key (e.g., prompt_tokens_rate_avg -> prompt)
+        return {key.replace("_tokens", ""): averages.get(f"{key}_rate_avg", 0.0) for key in counter_keys}
     
     def _read_log_file(self, log_path: str) -> str:
         """Read and return log file contents.

@@ -372,44 +372,7 @@
             evt.detail.headers['Cache-Control'] = 'no-cache';
         });
         
-        // Check GPU telemetry against warning thresholds
-        async function checkGPUGetWarning() {
-            try {
-                const response = await fetch('/api/telemetry/latest');
-                if (!response.ok) return;
-                const data = await response.json();
-                
-                // Get thresholds from dataset attributes
-                const warningBanner = document.getElementById('warning-banner');
-                const warningText = document.getElementById('warning-text');
-                const gpuWarningEl = document.getElementById('gpu-warning-text');
-                
-                if (data && (data.gpu_temp !== null && data.gpu_temp !== undefined || data.gpu_util !== null && data.gpu_util !== undefined)) {
-                    // Check thresholds
-                    let exceeds = [];
-                    
-                    // Get current thresholds from data attributes or use defaults
-                    const tempThreshold = {{ warning_gpu_temp or 85.0 }};
-                    const utilThreshold = {{ warning_gpu_util or 95.0 }};
-                    
-                    if (data.gpu_temp !== null && data.gpu_temp >= tempThreshold) {
-                        exceeds.push(`GPU temperature ${data.gpu_temp}°C >= threshold ${tempThreshold}°C`);
-                    }
-                    if (data.gpu_util !== null && data.gpu_util >= utilThreshold) {
-                        exceeds.push(`GPU utilization ${data.gpu_util}% >= threshold ${utilThreshold}%`);
-                    }
-                    
-                    if (exceeds.length > 0) {
-                        warningText.textContent = exceeds.join('; ');
-                        warningBanner.style.display = 'block';
-                    } else {
-                        warningBanner.style.display = 'none';
-                    }
-                }
-            } catch (err) {
-                // Silent fail
-            }
-        }
+        // Check GPU telemetry against warning thresholds (part of updateMetrics)
         
         // Update warning and ollama guidance banners from probe data
         async function checkProbes() {
@@ -449,19 +412,20 @@
         // Check probes every 5 seconds
         setInterval(checkProbes, 5000);
         
-        // Check GPU warnings every 2 seconds
-        setInterval(checkGPUGetWarning, 2000);
-        checkGPUGetWarning();
-        
         // Track last non-zero token rates for idle state display
+        // Each metric tracks its own last non-zero rate and timestamp
         let lastNonZeroRates = {
             prompt: null,
             generate: null,
             spec: null
         };
-        let lastNonZeroTime = null;
+        let lastNonZeroTimes = {
+            prompt: null,
+            generate: null,
+            spec: null
+        };
         
-        // Shared 1-second poller for token speeds and telemetry spans
+        // Shared 1-second poller for token speeds, telemetry spans, and warning banner
         async function updateMetrics() {
             try {
                 const response = await fetch('/api/telemetry/latest');
@@ -470,25 +434,27 @@
                 const stats = data.llama_stats ? JSON.parse(data.llama_stats) : null;
                 
                 // Update token speeds with averaged rates and idle state
-                const updateTokenSpeed = (id, key, label, lastId) => {
+                const updateTokenSpeed = (id, key) => {
                     const el = document.getElementById(id);
                     if (!el) return;
                     
                     // Use rate_avg if available, otherwise fall back to rate
                     let rate = stats ? (stats[key + '_avg'] ?? stats[key]) : 0;
-                    let isZero = !rate || rate === 0 || rate < 0.05;
+                    // Idle threshold: rates below 0.05 tok/s are considered idle
+                    const idleThreshold = 0.05;
+                    const isIdle = rate === null || rate === undefined || rate === 0 || rate < idleThreshold;
                     
-                    if (isZero) {
+                    if (isIdle) {
                         // Idle state
                         el.textContent = 'idle';
                         el.style.color = '#666';
                         
-                        // Track last non-zero rate for display
-                        if (lastNonZeroRates[lastId] !== null && lastNonZeroTime) {
+                        // Track last non-zero rate for this specific metric
+                        if (lastNonZeroRates[id] !== null && lastNonZeroTimes[id]) {
                             const lastEl = document.getElementById('tok-last-rate');
                             if (lastEl) {
-                                const age = Math.round((Date.now() - lastNonZeroTime) / 1000);
-                                lastEl.textContent = `Last: ${lastNonZeroRates[lastId]} tok/s · ${age}s ago`;
+                                const age = Math.round((Date.now() - lastNonZeroTimes[id]) / 1000);
+                                lastEl.textContent = `Last: ${lastNonZeroRates[id]} tok/s · ${age}s ago`;
                             }
                         }
                     } else {
@@ -496,9 +462,9 @@
                         el.textContent = rate.toFixed(1) + ' tok/s';
                         el.style.color = '#00ff88';
                         
-                        // Update last non-zero tracking
-                        lastNonZeroRates[lastId] = rate.toFixed(1);
-                        lastNonZeroTime = Date.now();
+                        // Update last non-zero tracking for this metric
+                        lastNonZeroRates[id] = rate.toFixed(1);
+                        lastNonZeroTimes[id] = Date.now();
                         
                         // Clear last rate display when active
                         const lastEl = document.getElementById('tok-last-rate');
@@ -506,11 +472,38 @@
                     }
                 };
                 
-                updateTokenSpeed('tok-prompt', 'prompt_tokens_rate', 'prompt', 'prompt');
-                updateTokenSpeed('tok-generate', 'generated_tokens_rate', 'generate', 'generate');
-                updateTokenSpeed('tok-spec', 'speculative_accepts_rate', 'spec', 'spec');
+                updateTokenSpeed('tok-prompt', 'prompt_tokens_rate');
+                updateTokenSpeed('tok-generate', 'generated_tokens_rate');
+                updateTokenSpeed('tok-spec', 'speculative_accepts_rate');
                 
                 // Update telemetry spans (GPU and Memory)
+                
+                // Check GPU telemetry against warning thresholds
+                const warningBanner = document.getElementById('warning-banner');
+                const warningText = document.getElementById('warning-text');
+                const tempThreshold = {{ warning_gpu_temp or 85.0 }};
+                const utilThreshold = {{ warning_gpu_util or 95.0 }};
+                
+                if (data && (data.gpu_temp !== null && data.gpu_temp !== undefined || data.gpu_util !== null && data.gpu_util !== undefined)) {
+                    let exceeds = [];
+                    
+                    if (data.gpu_temp !== null && data.gpu_temp >= tempThreshold) {
+                        exceeds.push(`GPU temperature ${data.gpu_temp}°C >= threshold ${tempThreshold}°C`);
+                    }
+                    if (data.gpu_util !== null && data.gpu_util >= utilThreshold) {
+                        exceeds.push(`GPU utilization ${data.gpu_util}% >= threshold ${utilThreshold}%`);
+                    }
+                    
+                    if (exceeds.length > 0) {
+                        warningText.textContent = exceeds.join('; ');
+                        warningBanner.style.display = 'block';
+                    } else {
+                        warningBanner.style.display = 'none';
+                    }
+                } else {
+                    // No telemetry data, hide warning
+                    warningBanner.style.display = 'none';
+                }
                 // Format GPU metrics
                 const gpuUtilEl = document.getElementById('gpu-util');
                 const gpuTempEl = document.getElementById('gpu-temp');

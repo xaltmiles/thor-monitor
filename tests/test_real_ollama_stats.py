@@ -164,8 +164,9 @@ class TestRealOllamaStatsSource:
             # Wait 0.5 second
             await asyncio.sleep(0.5)
             
-            # Fourth sample - 1 token in 0.5 seconds = 2 tok/s
-            # Allow more tolerance since window spans the entire 3 seconds
+            # Fourth sample - 1 token in 0.5 seconds (rate would be 2 tok/s if measured over 0.5s)
+            # But window spans 3 seconds, so delta is divided by ~3s = ~0.33 tok/s
+            # Allow tolerance since window includes some idle time before the new token
             fourth = await source.collect()
             assert 0.1 < fourth["ollama_generated_tokens_rate_avg"] < 1.5
         finally:

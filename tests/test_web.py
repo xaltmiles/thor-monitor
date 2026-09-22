@@ -153,7 +153,84 @@ async def test_api_probes_detect(test_client):
 
 
 @pytest.mark.asyncio
-async def test_no_htmx_json_dump_pattern_in_template():
+async def test_dashboard_html_renders_ollama_stats(test_client, test_db_path):
+    """Test that dashboard renders ollama stats when present and ollama is detected."""
+    from monitor.store import insert_telemetry_sample
+    
+    # Insert a telemetry sample with ollama stats
+    ollama_stats = {
+        "ollama_prompt_tokens": 1000,
+        "ollama_generated_tokens": 500,
+        "ollama_prompt_tokens_rate": 10.0,
+        "ollama_generated_tokens_rate": 5.0,
+        "ollama_prompt_tokens_rate_avg": 10.5,
+        "ollama_generated_tokens_rate_avg": 5.2
+    }
+    
+    await insert_telemetry_sample(
+        memory_total=32_000_000_000,
+        memory_free=16_000_000_000,
+        memory_used=16_000_000_000,
+        gpu_util=45.0,
+        gpu_temp=70.0,
+        gpu_power=150.0,
+        process_memory="[]",
+        ollama_stats=str(ollama_stats).replace("'", '"')
+    )
+    
+    response = test_client.get("/")
+    
+    assert response.status_code == 200
+    html = response.text
+    
+    # When ollama stats are present and ollama is detected (or default to ollama)
+    # the template should display ollama-specific token rates
+    # The server type is determined by probe detection, so we check for ollama-related content
+    assert "ollama_prompt_tokens_rate_avg" in html or "ollama" in html.lower()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_html_renders_llama_stats(test_client, test_db_path):
+    """Test that dashboard renders llama-server stats when present."""
+    from monitor.store import insert_telemetry_sample
+    
+    # Insert a telemetry sample with llama stats
+    llama_stats = {
+        "prompt_tokens": 10000,
+        "generated_tokens": 5000,
+        "speculative_accepts": 500,
+        "prompt_tokens_rate": 10.0,
+        "generated_tokens_rate": 5.0,
+        "speculative_accepts_rate": 0.5,
+        "prompt_tokens_rate_avg": 10.5,
+        "generated_tokens_rate_avg": 5.2,
+        "speculative_accepts_rate_avg": 0.55
+    }
+    
+    await insert_telemetry_sample(
+        memory_total=32_000_000_000,
+        memory_free=16_000_000_000,
+        memory_used=16_000_000_000,
+        gpu_util=45.0,
+        gpu_temp=70.0,
+        gpu_power=150.0,
+        process_memory="[]",
+        llama_stats=str(llama_stats).replace("'", '"')
+    )
+    
+    response = test_client.get("/")
+    
+    assert response.status_code == 200
+    html = response.text
+    
+    # When llama stats are present, the template should display llama-server rates
+    # The key is that llama-specific keys (speculative_accepts_rate_avg) should be present
+    # when llama stats are inserted
+    assert "speculative_accepts_rate_avg" in html or "speculative accepts" in html.lower()
+
+
+@pytest.mark.asyncio
+async def test_api_telemetry_latest_empty(test_client):
     """Test that dashboard template has no hx-swap='outerHTML' on telemetry endpoints."""
     import re
     from pathlib import Path

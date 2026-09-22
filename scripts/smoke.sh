@@ -6,7 +6,7 @@
 # Usage: bash scripts/smoke.sh   (or: make smoke)
 set -euo pipefail
 
-PORT=8000
+PORT=8123
 BASE="http://127.0.0.1:${PORT}"
 LOG="$(mktemp /tmp/monitor-smoke.XXXXXX.log)"
 

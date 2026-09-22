@@ -68,7 +68,8 @@ async def main():
                 "monitor.web.routes:app",
                 host="0.0.0.0",
                 port=8123,
-                reload=False
+                reload=False,
+                access_log=False
             )
         ).serve()
     except KeyboardInterrupt:

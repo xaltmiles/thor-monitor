@@ -59,15 +59,16 @@ async def main():
     from .web.routes import app as web_app
     web_app.state.sampler = sampler
     
+    PORT = 8123
     # Start web server (routes.create_app owns the shared BenchmarkRunner)
-    logger.info("Starting web server on 0.0.0.0:8000...")
+    logger.info(f"Starting web server on 0.0.0.0:{PORT}...")
     try:
         import uvicorn
         await uvicorn.Server(
             uvicorn.Config(
                 "monitor.web.routes:app",
                 host="0.0.0.0",
-                port=8123,
+                port=PORT,
                 reload=False,
                 access_log=False
             )

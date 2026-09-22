@@ -47,14 +47,14 @@ uv sync
 uv run monitor
 ```
 
-The dashboard will be available at `http://<your-thor-ip>:8000`
+The dashboard will be available at `http://<your-thor-ip>:8123`
 
 ### Running in LAN mode
 
-The app binds to `0.0.0.0:8000` by default, making it reachable from any device on your LAN. Access it from your laptop/phone at:
+The app binds to `0.0.0.0:8123` by default, making it reachable from any device on your LAN. Access it from your laptop/phone at:
 
 ```
-http://<your-thor-ip>:8000
+http://<your-thor-ip>:8123
 ```
 
 Replace `<your-thor-ip>` with the IP address of your Jetson Thor (e.g., `192.168.1.100`).
@@ -98,7 +98,7 @@ Run this checklist after starting the monitor to verify everything works:
 
 ```bash
 # From a laptop or phone on the same LAN
-curl http://<your-thor-ip>:8000/
+curl http://<your-thor-ip>:8123/
 ```
 
 Expected: HTML with "Monitor Dashboard" title and live telemetry cards.
@@ -106,7 +106,7 @@ Expected: HTML with "Monitor Dashboard" title and live telemetry cards.
 ### 2. Detect running server and model
 
 ```bash
-curl http://<your-thor-ip>:8000/api/probes/detect
+curl http://<your-thor-ip>:8123/api/probes/detect
 ```
 
 Expected: JSON with `servers` array (containing `ollama` or `llama-server`) and `models` array with model info.
@@ -114,7 +114,7 @@ Expected: JSON with `servers` array (containing `ollama` or `llama-server`) and 
 ### 3. Telemetry is flowing
 
 ```bash
-curl http://<your-thor-ip>:8000/api/telemetry/latest
+curl http://<your-thor-ip>:8123/api/telemetry/latest
 ```
 
 Expected: JSON with `memory_total`, `memory_used`, `gpu_util`, `gpu_temp`, `gpu_power`.
@@ -122,7 +122,7 @@ Expected: JSON with `memory_total`, `memory_used`, `gpu_util`, `gpu_temp`, `gpu_
 ### 4. Run a benchmark
 
 ```bash
-curl -X POST http://<your-thor-ip>:8000/api/benchmarks/start
+curl -X POST http://<your-thor-ip>:8123/api/benchmarks/start
 ```
 
 Expected: JSON with `status: "started"` and a run ID.
@@ -130,7 +130,7 @@ Expected: JSON with `status: "started"` and a run ID.
 Check progress:
 
 ```bash
-curl http://<your-thor-ip>:8000/api/benchmarks/progress
+curl http://<your-thor-ip>:8123/api/benchmarks/progress
 ```
 
 Expected: `state: "running"` during benchmark, then `state: "done"`.
@@ -140,7 +140,7 @@ Expected: `state: "running"` during benchmark, then `state: "done"`.
 After the benchmark completes, check the catalog:
 
 ```bash
-curl http://<your-thor-ip>:8000/api/benchmarks/runs
+curl http://<your-thor-ip>:8123/api/benchmarks/runs
 ```
 
 Expected: JSON with `runs` array containing the benchmark result with `tokens_per_second` and workload results.
@@ -234,15 +234,13 @@ Use the timeline to spot patterns (e.g., thermal throttling over time).
 ### Server not detected
 
 - Verify the server is running: `ps aux | grep -E 'ollama|llama-server'`
-- Check probe API: `curl http://localhost:8000/api/probes/detect`
+- Check probe API: `curl http://localhost:8123/api/probes/detect`
 
-### Port 8000 already in use
+### Port 8123 already in use
 
 ```bash
 # Find what's using the port
-sudo lsof -i :8000
-
-# Or use a different port (edit the source: monitor/web/routes.py)
+sudo lsof -i :8123
 ```
 
 ---

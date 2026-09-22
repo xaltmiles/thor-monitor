@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Catalog - Monitor</title>
     <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10"></script>
-{% set nav_active = 'comparison' %}
     <style>
         * {
             margin: 0;
@@ -175,31 +174,6 @@
         .event-timestamp {
             color: #666;
             font-size: 0.8em;
-        }
-        
-        .nav-links {
-            margin-bottom: 20px;
-            display: flex;
-            gap: 20px;
-        }
-        
-        .nav-links a {
-            color: #00d4ff;
-            text-decoration: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            background: #16213e;
-            transition: background 0.2s;
-        }
-        
-        .nav-links a:hover {
-            background: #1f3b6e;
-        }
-        
-        .nav-links a.active {
-            background: #00d4ff;
-            color: #16213e;
-            font-weight: bold;
         }
         
         .stats-grid {

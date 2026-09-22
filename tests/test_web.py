@@ -175,52 +175,26 @@ async def test_no_htmx_json_dump_pattern_in_template():
     )
 
 
-def test_dashboard_page_has_nav_links(test_client):
-    """Test dashboard page contains navigation links to all other pages."""
-    response = test_client.get("/")
+@pytest.mark.parametrize(
+    "url,expected_active",
+    [
+        ("/", "dashboard"),
+        ("/catalog/comparison", "comparison"),
+        ("/catalog/timeline", "timeline"),
+        ("/settings", "settings"),
+    ],
+)
+def test_nav_active_class_per_page(test_client, url, expected_active):
+    """Test that each page highlights the correct navigation link as active."""
+    response = test_client.get(url)
     assert response.status_code == 200
     html = response.text
     
-    # Check for all navigation links
-    assert 'href="/"' in html
-    assert 'href="/catalog/comparison"' in html
-    assert 'href="/catalog/timeline"' in html
-    assert 'href="/settings"' in html
-
-
-def test_comparison_page_has_nav_links(test_client):
-    """Test comparison page contains navigation links to all other pages."""
-    response = test_client.get("/catalog/comparison")
-    assert response.status_code == 200
-    html = response.text
+    # Verify the expected active link exists with class="active"
+    assert f'href="{url}"' in html
+    assert f'class="active"' in html
     
-    # Check for all navigation links
-    assert 'href="/"' in html
-    assert 'href="/catalog/comparison"' in html
-    assert 'href="/catalog/timeline"' in html
-    assert 'href="/settings"' in html
-
-
-def test_timeline_page_has_nav_links(test_client):
-    """Test timeline page contains navigation links to all other pages."""
-    response = test_client.get("/catalog/timeline")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check for all navigation links
-    assert 'href="/"' in html
-    assert 'href="/catalog/comparison"' in html
-    assert 'href="/catalog/timeline"' in html
-    assert 'href="/settings"' in html
-
-
-def test_settings_page_has_nav_links(test_client):
-    """Test settings page contains navigation links to all other pages."""
-    response = test_client.get("/settings")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check for all navigation links
+    # Verify all navigation links are present
     assert 'href="/"' in html
     assert 'href="/catalog/comparison"' in html
     assert 'href="/catalog/timeline"' in html

@@ -1,12 +1,46 @@
 # Thor Monitor
 
-A self-hosted web dashboard on your nvidia-thor PC that answers:
+A self-hosted web dashboard on your NVIDIA Thor PC that answers:
 
 - **Which LLM server** is running (ollama or unsloth studio with llama.cpp)?
 - **Which model** is currently loaded?
 - **At what speed** does it serve?
 
 It detects the running server and loaded model by probing—never by configuration—and never loads or changes models itself.
+
+## What it does
+
+Thor Monitor is a real-time observability tool for local LLM inference. It passively observes your running models, collecting:
+
+- **Server detection**: Automatically identifies ollama or llama-server (unsloth studio)
+- **Model tracking**: Reports the currently loaded model
+- **Telemetry**: GPU utilization, temperature, power, per-process GPU memory, unified memory totals
+- **Performance metrics**: Token-per-second rates during both passive usage and benchmark runs
+- **Historical catalog**: Stores all benchmark runs and passive sessions for model comparison
+
+See [docs/adr/](docs/adr/) for architecture decisions.
+
+---
+
+## Project layout
+
+```
+monitor/                 # Main package
+├── probes/              # Server and model detection
+├── telemetry/           # GPU and system metrics collection
+├── web/                 # HTTP server and templates
+├── benchmarks.py        # Benchmark workload definitions
+├── sampler.py           # Telemetry sampling loop
+├── sessions.py          # Passive observation sessions
+├── store.py             # SQLite persistence
+├── workloads.py         # Benchmark workloads
+└── main.py              # Entry point
+```
+
+See also:
+
+- [docs/adr/](docs/adr/) — Architecture Decision Records
+- [tests.md](tests.md) — Test strategy and guidelines
 
 ---
 
@@ -37,13 +71,23 @@ It detects the running server and loaded model by probing—never by configurati
 
 ## Quick Start
 
-### Manual run from the repo
+### Install dependencies
 
 ```bash
-# Install dependencies
 uv sync
+```
 
-# Start the monitor
+### Run the smoke test
+
+```bash
+make smoke
+```
+
+This verifies the app starts, telemetry flows, and the store works end-to-end.
+
+### Start the monitor
+
+```bash
 uv run monitor
 ```
 

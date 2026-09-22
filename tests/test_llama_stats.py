@@ -5,11 +5,14 @@ server over real HTTP and asserting on stored sessions.
 """
 
 import asyncio
+import time
+import tempfile
+import os
 
 import httpx
 import pytest
 
-from monitor.telemetry.real import RealLLaMAStatsSource
+from monitor.telemetry.real import RealLLaMAStatsSource, RealOllamaStatsSource
 from monitor.sessions import SessionTracker
 from monitor.store import (
     get_active_session,
@@ -27,8 +30,13 @@ async def test_stats_source_rates_over_real_http(test_db):
         
         first = await source.collect()
         assert first["prompt_tokens"] == 0
-        # First sample: cumulative only, no rates yet
-        assert "generated_tokens_rate" not in first
+        # First sample: cumulative only, rates are 0
+        assert first["prompt_tokens_rate"] == 0
+        assert first["generated_tokens_rate"] == 0
+        
+        # Record time before incrementing counters
+        import time
+        first_collect_time = time.monotonic()
         
         async with httpx.AsyncClient() as client:
             await client.post(
@@ -36,11 +44,25 @@ async def test_stats_source_rates_over_real_http(test_db):
                 json={"increments": {"prompt_tokens_total": 120, "generated_tokens_total": 45}},
             )
         
+        # Sleep for 1 second to simulate 1 Hz sampling
+        await asyncio.sleep(1.0)
+        
         second = await source.collect()
+        second_collect_time = time.monotonic()
+        
         assert second["prompt_tokens"] == 120
         assert second["generated_tokens"] == 45
-        assert second["prompt_tokens_rate"] == 120
-        assert second["generated_tokens_rate"] == 45
+        
+        # Calculate expected rate based on actual elapsed time between collects
+        # We use the midpoint between collect times to estimate when the delta occurred
+        elapsed = second_collect_time - first_collect_time
+        expected_prompt_rate = 120 / elapsed
+        expected_gen_rate = 45 / elapsed
+        
+        # Rate should be delta / elapsed (with some tolerance for timing variance)
+        # Allow 5% tolerance to account for HTTP and processing overhead
+        assert abs(second["prompt_tokens_rate"] - expected_prompt_rate) / expected_prompt_rate < 0.05
+        assert abs(second["generated_tokens_rate"] - expected_gen_rate) / expected_gen_rate < 0.05
 
 
 @pytest.mark.asyncio
@@ -91,16 +113,33 @@ async def test_stats_source_speculative_counters(test_db):
             )
         source = RealLLaMAStatsSource(host="127.0.0.1", port=server.port)
         
+        first_collect_time = asyncio.get_event_loop().time()
         await source.collect()
+        
+        # Record time before incrementing counters
+        import time
+        start_time = time.monotonic()
+        
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"{server.url}/metrics/inc",
                 json={"increments": {"speculative_accepts_total": 23}},
             )
+        
+        # Sleep for 1 second to simulate 1 Hz sampling
+        await asyncio.sleep(1.0)
         second = await source.collect()
         
+        second_collect_time = asyncio.get_event_loop().time()
+        
         assert second["speculative_accepts"] == 100
-        assert second["speculative_accepts_rate"] == 23
+        
+        # Calculate expected rate based on actual elapsed time between collects
+        elapsed = second_collect_time - first_collect_time
+        expected_rate = 23 / elapsed
+        
+        # Allow 5% tolerance to account for timing variance
+        assert abs(second["speculative_accepts_rate"] - expected_rate) / expected_rate < 0.05
 
 
 @pytest.mark.asyncio
@@ -140,3 +179,122 @@ async def test_no_session_without_activity(test_db):
     
     assert await get_active_session() is None
     assert await get_sessions_history() == []
+
+
+@pytest.mark.asyncio
+async def test_llama_rates_at_0_5_hz_interval(test_db):
+    """Rate calculation at 0.5 Hz (2 second interval) should give delta/2."""
+    async with FakeLLaMAServer(port=18094) as server:
+        source = RealLLaMAStatsSource(host="127.0.0.1", port=server.port)
+        
+        # First sample
+        first = await source.collect()
+        assert first["prompt_tokens_rate"] == 0
+        
+        # Increment counters
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{server.url}/metrics/inc",
+                json={"increments": {"prompt_tokens_total": 100}},
+            )
+        
+        # Sleep for 2 seconds (0.5 Hz)
+        await asyncio.sleep(2.0)
+        
+        second = await source.collect()
+        assert second["prompt_tokens"] == 100
+        
+        # At 0.5 Hz (2 second interval), rate should be 100/2 = 50 tok/s
+        assert 48 < second["prompt_tokens_rate"] < 52
+
+
+@pytest.mark.asyncio
+async def test_llama_rates_at_2_hz_interval(test_db):
+    """Rate calculation at 2 Hz (0.5 second interval) should give delta*2."""
+    async with FakeLLaMAServer(port=18095) as server:
+        source = RealLLaMAStatsSource(host="127.0.0.1", port=server.port)
+        
+        # First sample
+        first = await source.collect()
+        assert first["prompt_tokens_rate"] == 0
+        
+        # Increment counters
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{server.url}/metrics/inc",
+                json={"increments": {"prompt_tokens_total": 100}},
+            )
+        
+        # Sleep for 0.5 seconds (2 Hz)
+        await asyncio.sleep(0.5)
+        
+        second = await source.collect()
+        assert second["prompt_tokens"] == 100
+        
+        # At 2 Hz (0.5 second interval), rate should be 100/0.5 = 200 tok/s
+        # Allow 10% tolerance to account for timing variance at faster rates
+        assert 180 < second["prompt_tokens_rate"] < 220
+
+
+@pytest.mark.asyncio
+async def test_ollama_rates_at_0_5_hz_interval(test_db):
+    """Ollama rate calculation at 0.5 Hz (2 second interval) should give delta/2."""
+    # Create a temporary log file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
+        f.write("2024/01/01 12:00:00 llama_new_context: n_tokens = 64\n")
+        f.write("2024/01/01 12:00:01 llama_token = 1234\n")
+        log_path = f.name
+
+    try:
+        source = RealOllamaStatsSource(log_path=log_path)
+        
+        # First sample
+        first = await source.collect()
+        assert first["ollama_prompt_tokens_rate"] == 0
+        assert first["ollama_generated_tokens_rate"] == 0
+        
+        # Add more tokens
+        with open(log_path, 'a') as f:
+            f.write("2024/01/01 12:00:02 llama_token = 5678\n")
+        
+        # Sleep for 2 seconds (0.5 Hz)
+        await asyncio.sleep(2.0)
+        
+        second = await source.collect()
+        
+        # At 0.5 Hz (2 second interval), rate should be 1/2 = 0.5 tok/s for generated
+        assert 0.4 < second["ollama_generated_tokens_rate"] < 0.6
+    finally:
+        os.unlink(log_path)
+
+
+@pytest.mark.asyncio
+async def test_ollama_rates_at_2_hz_interval(test_db):
+    """Ollama rate calculation at 2 Hz (0.5 second interval) should give delta*2."""
+    # Create a temporary log file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
+        f.write("2024/01/01 12:00:00 llama_new_context: n_tokens = 64\n")
+        f.write("2024/01/01 12:00:01 llama_token = 1234\n")
+        log_path = f.name
+
+    try:
+        source = RealOllamaStatsSource(log_path=log_path)
+        
+        # First sample
+        first = await source.collect()
+        assert first["ollama_prompt_tokens_rate"] == 0
+        assert first["ollama_generated_tokens_rate"] == 0
+        
+        # Add more tokens
+        with open(log_path, 'a') as f:
+            f.write("2024/01/01 12:00:02 llama_token = 5678\n")
+        
+        # Sleep for 0.5 seconds (2 Hz)
+        await asyncio.sleep(0.5)
+        
+        second = await source.collect()
+        
+        # At 2 Hz (0.5 second interval), rate should be 1/0.5 = 2 tok/s for generated
+        assert 1.9 < second["ollama_generated_tokens_rate"] < 2.1
+    finally:
+        os.unlink(log_path)

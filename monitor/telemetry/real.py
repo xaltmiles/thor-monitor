@@ -144,6 +144,7 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
         self.port = port  # None -> discovered from probes
         self.timeout = timeout
         self._last_counters = None
+        self._last_timestamp = None  # monotonic timestamp of last collect
         self._detect_cache = None  # (monotonic_time, host, port)
     
     async def _resolve_target(self) -> tuple:
@@ -173,12 +174,15 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
         Returns:
             dict with cumulative counters (prompt_tokens, generated_tokens,
             speculative_accepts) and per-second rates (*_rate) computed by
-            differencing against the previous sample (1 Hz sampling).
+            differencing against the previous sample, normalized to per-second.
         """
         host, port = await self._resolve_target()
         if not host or not port:
             self._last_counters = None
+            self._last_timestamp = None
             return self._empty()
+        
+        current_time = asyncio.get_event_loop().time()
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -188,20 +192,30 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
                     counters = self._parse_metrics(response.text)
                     
                     result = counters.copy()
-                    if self._last_counters:
+                    if self._last_counters and self._last_timestamp is not None:
+                        elapsed = current_time - self._last_timestamp
                         for key in ("prompt_tokens", "generated_tokens", "speculative_accepts"):
                             prev = self._last_counters.get(key, 0)
                             delta = counters.get(key, 0) - prev
                             # Clamp resets (server restart zeroes counters) to no-activity
-                            result[f"{key}_rate"] = max(0, delta)
+                            if delta >= 0 and elapsed > 0:
+                                result[f"{key}_rate"] = delta / elapsed
+                            else:
+                                result[f"{key}_rate"] = 0
+                    else:
+                        # First sample: rates are 0
+                        for key in ("prompt_tokens_rate", "generated_tokens_rate", "speculative_accepts_rate"):
+                            result[key] = 0
                     
                     self._last_counters = counters
+                    self._last_timestamp = current_time
                     return result
         except Exception:
             pass
         
         # Unreachable server: drop baseline so reconnection re-baselines cleanly
         self._last_counters = None
+        self._last_timestamp = None
         return self._empty()
     
     @staticmethod
@@ -257,6 +271,7 @@ class RealOllamaStatsSource(OllamaStatsSource):
         self._log_path = log_path
         self._last_prompt_tokens = 0
         self._last_generated_tokens = 0
+        self._last_timestamp = None  # monotonic timestamp of last collect
     
     async def collect(self) -> dict:
         """Collect ollama stats from debug logs.
@@ -305,13 +320,26 @@ class RealOllamaStatsSource(OllamaStatsSource):
             # If we can't read the log, return zeros
             pass
         
-        # Compute rates by differencing against previous sample
-        prompt_rate = max(0, prompt_tokens - self._last_prompt_tokens)
-        gen_rate = max(0, generated_tokens - self._last_generated_tokens)
+        current_time = asyncio.get_event_loop().time()
+        
+        # Compute rates by differencing against previous sample, normalized to per-second
+        if self._last_timestamp is not None:
+            elapsed = current_time - self._last_timestamp
+            if elapsed > 0:
+                prompt_rate = max(0, (prompt_tokens - self._last_prompt_tokens) / elapsed)
+                gen_rate = max(0, (generated_tokens - self._last_generated_tokens) / elapsed)
+            else:
+                prompt_rate = 0
+                gen_rate = 0
+        else:
+            # First sample: no rate yet
+            prompt_rate = 0
+            gen_rate = 0
         
         # Update last values for next sample
         self._last_prompt_tokens = prompt_tokens
         self._last_generated_tokens = generated_tokens
+        self._last_timestamp = current_time
         
         return {
             "ollama_prompt_tokens": prompt_tokens,

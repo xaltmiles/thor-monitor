@@ -1,5 +1,6 @@
 """Tests for RealOllamaStatsSource."""
 
+import asyncio
 import pytest
 import tempfile
 import os
@@ -66,24 +67,27 @@ class TestRealOllamaStatsSource:
         try:
             source = RealOllamaStatsSource(log_path=log_path)
 
-            # First call - should get absolute values
+            # First call - should get absolute values, rate should be 0 for first sample
             data1 = await source.collect()
             assert data1["ollama_prompt_tokens"] == 64
             assert data1["ollama_generated_tokens"] == 2
-            assert data1["ollama_prompt_tokens_rate"] == 64  # First sample
-            assert data1["ollama_generated_tokens_rate"] == 2  # First sample
+            assert data1["ollama_prompt_tokens_rate"] == 0  # First sample, no rate yet
+            assert data1["ollama_generated_tokens_rate"] == 0  # First sample, no rate yet
 
             # Add more tokens to log file
             with open(log_path, 'a') as f:
                 f.write("2024/01/01 12:00:03 llama_token = 9012\n")
                 f.write("2024/01/01 12:00:04 llama_token = 2345\n")
 
-            # Second call - should get rate of new tokens
+            # Sleep for 1 second to simulate 1 Hz sampling
+            await asyncio.sleep(1.0)
+
+            # Second call - should get rate of new tokens (2 tokens over 1 second = 2 tok/s)
             data2 = await source.collect()
             assert data2["ollama_prompt_tokens"] == 64
             assert data2["ollama_generated_tokens"] == 4  # 2 more tokens
             assert data2["ollama_prompt_tokens_rate"] == 0  # No change in prompt tokens
-            assert data2["ollama_generated_tokens_rate"] == 2  # 2 new tokens
+            assert abs(data2["ollama_generated_tokens_rate"] - 2) < 0.1  # 2 tokens / 1 second
         finally:
             os.unlink(log_path)
 

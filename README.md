@@ -14,6 +14,9 @@ It detects the running server and loaded model by probing—never by configurati
 
 - **Probe-based detection**: Discovers which server (ollama or llama-server) is running and which model is loaded, purely by inspecting processes, APIs, and system tools
 - **Live telemetry**: GPU utilization, temperature, power, per-process GPU memory, unified memory totals
+  - **Unified memory** is measured from `/proc/meminfo`: `MemTotal` (total system RAM) and `MemAvailable` (free + cacheable). Used = Total − Available.
+    - `tegrastats` uses the same kernel accounting for its RAM line, so its total matches `MemTotal`.
+    - `nvidia-smi` reports per-process GPU-side allocations (e.g., `llama-server 53132MiB`), not system-wide RAM usage.
 - **Passive observation**: Measures actual tok/s during your usage without generating load
 - **Benchmark runs**: Standard suite (short, long-context, burst) with results stored in a persistent catalog
 - **Catalog**: Historical record of all benchmark runs and passive sessions for model comparisons

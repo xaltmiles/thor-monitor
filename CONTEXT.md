@@ -31,3 +31,9 @@ _Avoid_: conversation, chat
 **Catalog**:
 The accumulated history of Benchmark Runs and Sessions per model, stored in SQLite. Answers "which models ran, at what speed".
 _Avoid_: report, log
+
+**Unified Memory**:
+System-wide RAM usage on the Jetson Thor, measured as `MemTotal − MemAvailable` from `/proc/meminfo`.
+This is the same underlying kernel accounting that `tegrastats` uses for its RAM line,
+but differs from `nvidia-smi`, which reports per-process GPU-side allocations.
+_Avoid_: total memory, system memory

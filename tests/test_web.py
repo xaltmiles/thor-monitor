@@ -271,6 +271,7 @@ async def test_no_htmx_json_dump_pattern_in_template():
         ("/catalog/comparison", "comparison"),
         ("/catalog/timeline", "timeline"),
         ("/settings", "settings"),
+        ("/plots", "plots"),
     ],
 )
 def test_nav_active_class_per_page(test_client, url, expected_active):
@@ -288,3 +289,64 @@ def test_nav_active_class_per_page(test_client, url, expected_active):
     assert 'href="/catalog/comparison"' in html
     assert 'href="/catalog/timeline"' in html
     assert 'href="/settings"' in html
+    assert 'href="/plots"' in html
+
+
+@pytest.mark.asyncio
+async def test_plots_html_returns_200_with_charts(test_client, test_db_path):
+    """Test that /plots returns 200 and contains expected chart containers."""
+    # Insert test telemetry data
+    from monitor.store import insert_telemetry_sample
+    import json
+    
+    # Insert sample telemetry with both llama and ollama stats
+    for i in range(10):
+        llama_stats = {
+            "prompt_tokens": 1000 + i * 100,
+            "generated_tokens": 500 + i * 50,
+            "speculative_accepts": 50 + i * 5,
+            "prompt_tokens_rate": 10.0 + i * 0.5,
+            "generated_tokens_rate": 5.0 + i * 0.2,
+            "speculative_accepts_rate": 0.5 + i * 0.05,
+        }
+        ollama_stats = {
+            "ollama_prompt_tokens": 800 + i * 80,
+            "ollama_generated_tokens": 400 + i * 40,
+            "ollama_prompt_tokens_rate": 8.0 + i * 0.4,
+            "ollama_generated_tokens_rate": 4.0 + i * 0.2,
+        }
+        
+        await insert_telemetry_sample(
+            memory_total=32_000_000_000,
+            memory_free=16_000_000_000 - i * 500_000_000,
+            memory_used=16_000_000_000 + i * 500_000_000,
+            gpu_util=45.0 + i * 2,
+            gpu_temp=70.0 + i,
+            gpu_power=150.0 + i * 5,
+            process_memory="[]",
+            llama_stats=json.dumps(llama_stats) if i % 2 == 0 else None,
+            ollama_stats=json.dumps(ollama_stats) if i % 2 == 1 else None,
+        )
+    
+    response = test_client.get("/plots")
+    
+    assert response.status_code == 200
+    html = response.text
+    
+    # Check for expected chart containers
+    assert 'id="memory-chart"' in html
+    assert 'id="gpu-temp-chart"' in html
+    assert 'id="tok-s-chart"' in html
+    
+    # Check that Chart.js is included
+    assert 'cdn.jsdelivr.net/npm/chart.js' in html
+    
+    # Check that the route is marked as active in nav
+    assert 'href="/plots"' in html
+    assert 'class="active"' in html
+    
+    # Check for range selector buttons
+    assert 'data-limit="60"' in html  # 1m
+    assert 'data-limit="300"' in html  # 5m
+    assert 'data-limit="900"' in html  # 15m
+    assert 'data-limit="3600"' in html  # 1h

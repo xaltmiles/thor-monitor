@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plots - Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            margin-bottom: 10px;
+            color: #00d4ff;
+        }
+        
+        .subtitle {
+            color: #888;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        
+        .range-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .range-btn {
+            background: #16213e;
+            border: 1px solid #00d4ff;
+            color: #00d4ff;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9em;
+        }
+        
+        .range-btn:hover {
+            background: #1f3b6e;
+            border-color: #00d4ff;
+        }
+        
+        .range-btn.active {
+            background: #00d4ff;
+            color: #16213e;
+            font-weight: bold;
+        }
+        
+        .charts-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        
+        .chart-card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .chart-card h3 {
+            color: #00d4ff;
+            font-size: 1em;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #1f3b6e;
+        }
+        
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+        
+        .chart-info {
+            color: #888;
+            font-size: 0.85em;
+            margin-top: 10px;
+        }
+        
+        .empty-state {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            color: #888;
+        }
+        
+        .empty-state p {
+            margin-bottom: 10px;
+        }
+        
+        .chart-legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85em;
+        }
+        
+        .legend-color {
+            width: 16px;
+            height: 3px;
+            border-radius: 2px;
+        }
+        
+        .chart-footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #1f3b6e;
+            color: #666;
+            font-size: 0.9em;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {% set nav_active = 'plots' %}
+        {% include '_nav.html' %}
+        
+        <h1>Telemetry History</h1>
+        <p class="subtitle">Real-time charts for memory, GPU temperature, and token generation speed</p>
+        
+        <div class="range-selector">
+            <button class="range-btn active" data-limit="300">Last 5m</button>
+            <button class="range-btn" data-limit="60">Last 1m</button>
+            <button class="range-btn" data-limit="900">Last 15m</button>
+            <button class="range-btn" data-limit="3600">Last 1h</button>
+        </div>
+        
+        <div class="charts-container">
+            <div class="chart-card">
+                <h3>Memory Usage</h3>
+                <div class="chart-wrapper">
+                    <canvas id="memory-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #00d4ff;"></div>
+                        <span>Used (GiB)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #00ff88;"></div>
+                        <span>Total (GiB)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>GPU Temperature</h3>
+                <div class="chart-wrapper">
+                    <canvas id="gpu-temp-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ff6b6b;"></div>
+                        <span>Temperature (°C)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>Token Generation Speed</h3>
+                <div class="chart-wrapper">
+                    <canvas id="tok-s-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #00d4ff;"></div>
+                        <span>Llama tok/s</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #00ff88;"></div>
+                        <span>Ollama tok/s</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>GPU Utilization</h3>
+                <div class="chart-wrapper">
+                    <canvas id="gpu-util-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ffd93d;"></div>
+                        <span>Utilization (%)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>GPU Power</h3>
+                <div class="chart-wrapper">
+                    <canvas id="gpu-power-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #d400ff;"></div>
+                        <span>Power (W)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="chart-footer">
+            Data refreshes automatically • Last updated: <span id="last-updated">Never</span>
+        </div>
+    </div>
+    
+    <script>
+        // Store charts globally so we can destroy and recreate them
+        const charts = {};
+        let currentLimit = 300;
+        let dataFetched = false;
+        
+        // Colors matching the chart legends
+        const COLORS = {
+            ollama: '#00d4ff',
+            ollamaHover: '#33e0ff',
+            llama: '#00ff88',
+            llamaHover: '#33ffaa',
+            gpuTemp: '#ff6b6b',
+            gpuTempHover: '#ff8888',
+            gpuUtil: '#ffd93d',
+            gpuUtilHover: '#ffea66',
+            gpuPower: '#d400ff',
+            gpuPowerHover: '#e633ff',
+        };
+        
+        async function fetchData(limit) {
+            try {
+                const response = await fetch(`/api/telemetry/history?limit=${limit}`);
+                const data = await response.json();
+                
+                // Reverse the array: API returns newest-first, Chart.js expects oldest-first
+                return data.reverse();
+            } catch (error) {
+                console.error('Error fetching telemetry data:', error);
+                return [];
+            }
+        }
+        
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString();
+        }
+        
+        function bytesToGiB(bytes) {
+            return (bytes / (1024 * 1024 * 1024)).toFixed(1);
+        }
+        
+        function parseStats(jsonStr, rateKey) {
+            if (!jsonStr) return null;
+            try {
+                const stats = JSON.parse(jsonStr);
+                return stats[rateKey];
+            } catch {
+                return null;
+            }
+        }
+        
+        function destroyCharts() {
+            Object.values(charts).forEach(chart => {
+                if (chart) {
+                    chart.destroy();
+                }
+            });
+            Object.keys(charts).forEach(key => charts[key] = null);
+        }
+        
+        function createLineChart(ctx, datasets, labels) {
+            const chartData = {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets.map(d => ({
+                        label: d.label,
+                        data: d.data,
+                        borderColor: d.borderColor,
+                        hoverBorderColor: d.hoverBorderColor,
+                        backgroundColor: d.fill ? d.borderColor : undefined,
+                        borderWidth: d.borderWidth || 2,
+                        pointRadius: d.pointRadius !== undefined ? d.pointRadius : 0,
+                        pointHoverRadius: d.pointHoverRadius !== undefined ? d.pointHoverRadius : 4,
+                        fill: d.fill || false,
+                        tension: d.tension !== undefined ? d.tension : 0.4,
+                        spanGaps: true,
+                    })),
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            display: false,
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: '#16213e',
+                            titleColor: '#00d4ff',
+                            bodyColor: '#eee',
+                            borderColor: '#00d4ff',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                color: '#1f3b6e',
+                            },
+                            ticks: {
+                                color: '#888',
+                                maxTicksLimit: 10,
+                                callback: function(val, index, ticks) {
+                                    if (index % Math.ceil(labels.length / 10) === 0) {
+                                        return formatTimestamp(labels[val]);
+                                    }
+                                    return '';
+                                }
+                            }
+                        },
+                        y: {
+                            grid: {
+                                color: '#1f3b6e',
+                            },
+                            ticks: {
+                                color: '#888',
+                            }
+                        }
+                    }
+                }
+            };
+            
+            return new Chart(ctx, chartData);
+        }
+        
+        function updateCharts(data) {
+            if (!data || data.length === 0) {
+                // Show empty state
+                document.querySelector('.charts-container').innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <p>No telemetry data available yet.</p>
+                        <p>The system will start collecting data once telemetry sampling begins.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            destroyCharts();
+            
+            const timestamps = data.map(row => row.timestamp);
+            
+            // Memory chart (2 datasets)
+            const memoryUsed = data.map(row => {
+                if (row.memory_used !== null) {
+                    return bytesToGiB(row.memory_used);
+                }
+                return null;
+            });
+            
+            const memoryTotal = data.map(row => {
+                if (row.memory_total !== null) {
+                    return bytesToGiB(row.memory_total);
+                }
+                return null;
+            });
+            
+            const memoryCtx = document.getElementById('memory-chart').getContext('2d');
+            charts.memory = createLineChart(memoryCtx, [
+                { label: 'Used', data: memoryUsed, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false },
+                { label: 'Total', data: memoryTotal, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false }
+            ], timestamps);
+            
+            // GPU Temp chart (1 dataset)
+            const gpuTemp = data.map(row => row.gpu_temp);
+            const gpuTempCtx = document.getElementById('gpu-temp-chart').getContext('2d');
+            charts.gpuTemp = createLineChart(gpuTempCtx, [
+                { label: 'Temperature', data: gpuTemp, borderColor: COLORS.gpuTemp, hoverBorderColor: COLORS.gpuTempHover, fill: false }
+            ], timestamps);
+            
+            // Tok/s chart (2 datasets)
+            const llamaTokS = data.map(row => parseStats(row.llama_stats, 'generated_tokens_rate'));
+            const ollamaTokS = data.map(row => parseStats(row.ollama_stats, 'ollama_generated_tokens_rate'));
+            
+            const tokSCtx = document.getElementById('tok-s-chart').getContext('2d');
+            charts.tokS = createLineChart(tokSCtx, [
+                { label: 'Llama tok/s', data: llamaTokS, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false },
+                { label: 'Ollama tok/s', data: ollamaTokS, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false }
+            ], timestamps);
+            
+            // GPU Util chart (1 dataset)
+            const gpuUtil = data.map(row => row.gpu_util);
+            const gpuUtilCtx = document.getElementById('gpu-util-chart').getContext('2d');
+            charts.gpuUtil = createLineChart(gpuUtilCtx, [
+                { label: 'Utilization', data: gpuUtil, borderColor: COLORS.gpuUtil, hoverBorderColor: COLORS.gpuUtilHover, fill: false }
+            ], timestamps);
+            
+            // GPU Power chart (1 dataset)
+            const gpuPower = data.map(row => row.gpu_power);
+            const gpuPowerCtx = document.getElementById('gpu-power-chart').getContext('2d');
+            charts.gpuPower = createLineChart(gpuPowerCtx, [
+                { label: 'Power', data: gpuPower, borderColor: COLORS.gpuPower, hoverBorderColor: COLORS.gpuPowerHover, fill: false }
+            ], timestamps);
+            
+            // Update last updated timestamp
+            if (data.length > 0) {
+                const lastTimestamp = new Date(data[data.length - 1].timestamp);
+                document.getElementById('last-updated').textContent = lastTimestamp.toLocaleString();
+            }
+        }
+        
+        async function loadCharts(limit) {
+            const data = await fetchData(limit);
+            updateCharts(data);
+        }
+        
+        // Initialize charts on page load
+        document.addEventListener('DOMContentLoaded', async function() {
+            currentLimit = 300;
+            await loadCharts(currentLimit);
+            dataFetched = true;
+            
+            // Range selector event handlers
+            document.querySelectorAll('.range-btn').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    // Update active button
+                    document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    // Get new limit
+                    currentLimit = parseInt(this.dataset.limit, 10);
+                    
+                    // Fetch and update charts
+                    await loadCharts(currentLimit);
+                });
+            });
+            
+            // Auto-refresh every 30 seconds
+            setInterval(async function() {
+                if (dataFetched) {
+                    await loadCharts(currentLimit);
+                }
+            }, 30000);
+        });
+    </script>
+</body>
+</html>

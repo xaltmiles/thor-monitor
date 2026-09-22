@@ -76,6 +76,12 @@ def create_app():
         })
         return HTMLResponse(content=content)
     
+    @app.get("/plots", response_class=HTMLResponse)
+    async def plots():
+        """Render the plots page."""
+        content = await render_template("plots.html", {})
+        return HTMLResponse(content=content)
+    
     @app.get("/", response_class=HTMLResponse)
     async def dashboard():
         """Render the main dashboard page."""

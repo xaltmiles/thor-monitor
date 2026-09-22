@@ -200,47 +200,53 @@
             </div>
             
             <!-- Token Speeds Card -->
+            {% set server_type = models.servers[0].type if models and models.servers and models.servers|length > 0 else 'llama-server' %}
             <div class="card">
-                <h2>Token Speeds</h2>
+                <h2>Token Speeds ({{ server_type }})</h2>
                 {% set llama = latest.llama_stats | from_json if latest and latest.llama_stats else {} %}
                 {% set ollama = latest.ollama_stats | from_json if latest and latest.ollama_stats else {} %}
-                {# Determine which stats blob is actually available (not empty) #}
+                {# Determine which stats blob to use: only consider non-empty blobs that match the detected server type #}
                 {% set has_llama = llama and llama | length > 0 %}
                 {% set has_ollama = ollama and ollama | length > 0 %}
-                {# If both have stats, prefer llama if detected, else prefer the one that has data #}
-                {% set server_type = models.servers[0].type if models and models.servers and models.servers|length > 0 else 'llama-server' %}
-                {% if has_ollama and server_type == 'ollama' %}
+                {% set empty_llama = llama and llama | length == 0 %}
+                {% set empty_ollama = ollama and ollama | length == 0 %}
+                {% if server_type == 'ollama' and has_ollama %}
                     {% set active_stats = ollama %}
-                {% elif has_llama %}
+                {% elif server_type == 'llama-server' and has_llama %}
                     {% set active_stats = llama %}
                 {% elif has_ollama %}
                     {% set active_stats = ollama %}
-                {% else %}
+                {% elif has_llama %}
                     {% set active_stats = llama %}
+                {% else %}
+                    {% set active_stats = {} %}
                 {% endif %}
-                {# Determine server label for display based on which stats are being shown #}
-                {% set server_label = 'ollama' if active_stats and 'ollama_prompt_tokens_rate_avg' in active_stats else 'llama-server' %}
+                {% set is_ollama = active_stats and 'ollama_prompt_tokens_rate_avg' in active_stats %}
                 <div class="metric">
-                    <span class="metric-label">Prompt tok/s ({{ server_label }})</span>
+                    <span class="metric-label">Prompt tok/s ({{ 'ollama' if is_ollama else 'llama-server' }})</span>
                     <span class="metric-value" id="tok-prompt">
-                        {%- if active_stats and 'ollama_prompt_tokens_rate_avg' in active_stats -%}
+                        {%- if active_stats and is_ollama -%}
                             {{ active_stats.get('ollama_prompt_tokens_rate_avg', 0) | round(1) }}
-                        {%- else -%}
+                        {%- elif active_stats -%}
                             {{ active_stats.get('prompt_tokens_rate_avg', 0) | round(1) }}
+                        {%- else -%}
+                            0.0
                         {%- endif -%}
                     </span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Generation tok/s ({{ server_label }})</span>
+                    <span class="metric-label">Generation tok/s ({{ 'ollama' if is_ollama else 'llama-server' }})</span>
                     <span class="metric-value" id="tok-generate">
-                        {%- if active_stats and 'ollama_generated_tokens_rate_avg' in active_stats -%}
+                        {%- if active_stats and is_ollama -%}
                             {{ active_stats.get('ollama_generated_tokens_rate_avg', 0) | round(1) }}
-                        {%- else -%}
+                        {%- elif active_stats -%}
                             {{ active_stats.get('generated_tokens_rate_avg', 0) | round(1) }}
+                        {%- else -%}
+                            0.0
                         {%- endif -%}
                     </span>
                 </div>
-                {% if active_stats and 'speculative_accepts_rate_avg' in active_stats %}
+                {% if active_stats and not is_ollama and 'speculative_accepts_rate_avg' in active_stats %}
                 <div class="metric">
                     <span class="metric-label">Speculative accepts/s (llama-server)</span>
                     <span class="metric-value" id="tok-spec">{{ active_stats.get('speculative_accepts_rate_avg', 0) | round(1) }}</span>
@@ -433,6 +439,11 @@
                         guidanceBanner.style.display = 'none';
                     }
                     
+                    // Update detected server type for token speed selection
+                    if (data.servers && data.servers.length > 0) {
+                        detectedServerType = data.servers[0].type || 'llama-server';
+                    }
+                    
                     // Update loaded model data
                     if (data.models && data.models.length > 0) {
                         // Models will be fetched separately
@@ -459,22 +470,39 @@
             spec: null
         };
         
+        // Store the detected server type from probe data
+        let detectedServerType = 'llama-server'; // default
+        
         // Shared 1-second poller for token speeds, telemetry spans, and warning banner
         async function updateMetrics() {
             try {
                 const response = await fetch('/api/telemetry/latest');
                 if (!response.ok) return;
                 const data = await response.json();
-                // Determine which stats blob to use based on what's available
-                // If both are present, prefer the one matching the detected server type
+                // Determine which stats blob to use based on detected server type
+                // Treat zero-filled stats as 'no data' (empty dict has length 0)
                 let stats = null;
-                let serverType = 'llama-server'; // default
+                let serverType = detectedServerType || 'llama-server'; // use detected type, default to llama-server
                 
-                if (data.ollama_stats) {
-                    stats = JSON.parse(data.ollama_stats);
+                const llamaStats = data.llama_stats ? JSON.parse(data.llama_stats) : {};
+                const ollamaStats = data.ollama_stats ? JSON.parse(data.ollama_stats) : {};
+                
+                // Only use a stats blob if it has actual data (non-zero or non-empty)
+                // A zero-filled ollama stats blob is considered 'no data'
+                const hasLlamaData = llamaStats && Object.keys(llamaStats).length > 0;
+                const hasOllamaData = ollamaStats && Object.keys(ollamaStats).length > 0;
+                
+                if (serverType === 'ollama' && hasOllamaData) {
+                    stats = ollamaStats;
                     serverType = 'ollama';
-                } else if (data.llama_stats) {
-                    stats = JSON.parse(data.llama_stats);
+                } else if (serverType === 'llama-server' && hasLlamaData) {
+                    stats = llamaStats;
+                    serverType = 'llama-server';
+                } else if (hasOllamaData) {
+                    stats = ollamaStats;
+                    serverType = 'ollama';
+                } else if (hasLlamaData) {
+                    stats = llamaStats;
                     serverType = 'llama-server';
                 }
                 

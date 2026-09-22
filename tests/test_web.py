@@ -153,8 +153,9 @@ async def test_api_probes_detect(test_client):
 
 
 @pytest.mark.asyncio
-async def test_dashboard_html_renders_ollama_stats(test_client, test_db_path):
+async def test_dashboard_html_renders_ollama_stats(test_client):
     """Test that dashboard renders ollama stats when present and ollama is detected."""
+    import json
     from monitor.store import insert_telemetry_sample
     
     # Insert a telemetry sample with ollama stats
@@ -175,7 +176,7 @@ async def test_dashboard_html_renders_ollama_stats(test_client, test_db_path):
         gpu_temp=70.0,
         gpu_power=150.0,
         process_memory="[]",
-        ollama_stats=str(ollama_stats).replace("'", '"')
+        ollama_stats=json.dumps(ollama_stats)
     )
     
     response = test_client.get("/")
@@ -183,15 +184,16 @@ async def test_dashboard_html_renders_ollama_stats(test_client, test_db_path):
     assert response.status_code == 200
     html = response.text
     
-    # When ollama stats are present and ollama is detected (or default to ollama)
-    # the template should display ollama-specific token rates
-    # The server type is determined by probe detection, so we check for ollama-related content
-    assert "ollama_prompt_tokens_rate_avg" in html or "ollama" in html.lower()
+    # When ollama stats are present and ollama is detected, the template should display ollama rates
+    # Assert the actual rate values (10.5 and 5.2) are rendered
+    assert "10.5" in html, "Expected ollama_prompt_tokens_rate_avg=10.5 to be rendered"
+    assert "5.2" in html, "Expected ollama_generated_tokens_rate_avg=5.2 to be rendered"
 
 
 @pytest.mark.asyncio
-async def test_dashboard_html_renders_llama_stats(test_client, test_db_path):
+async def test_dashboard_html_renders_llama_stats(test_client):
     """Test that dashboard renders llama-server stats when present."""
+    import json
     from monitor.store import insert_telemetry_sample
     
     # Insert a telemetry sample with llama stats
@@ -204,7 +206,7 @@ async def test_dashboard_html_renders_llama_stats(test_client, test_db_path):
         "speculative_accepts_rate": 0.5,
         "prompt_tokens_rate_avg": 10.5,
         "generated_tokens_rate_avg": 5.2,
-        "speculative_accepts_rate_avg": 0.55
+        "speculative_accepts_rate_avg": 0.6  # rounded to 1 decimal place
     }
     
     await insert_telemetry_sample(
@@ -215,7 +217,7 @@ async def test_dashboard_html_renders_llama_stats(test_client, test_db_path):
         gpu_temp=70.0,
         gpu_power=150.0,
         process_memory="[]",
-        llama_stats=str(llama_stats).replace("'", '"')
+        llama_stats=json.dumps(llama_stats)
     )
     
     response = test_client.get("/")
@@ -224,13 +226,23 @@ async def test_dashboard_html_renders_llama_stats(test_client, test_db_path):
     html = response.text
     
     # When llama stats are present, the template should display llama-server rates
-    # The key is that llama-specific keys (speculative_accepts_rate_avg) should be present
-    # when llama stats are inserted
-    assert "speculative_accepts_rate_avg" in html or "speculative accepts" in html.lower()
+    # Assert the actual rate values (10.5, 5.2, 0.6) are rendered (0.6 = round(0.6, 1))
+    assert "10.5" in html, "Expected prompt_tokens_rate_avg=10.5 to be rendered"
+    assert "5.2" in html, "Expected generated_tokens_rate_avg=5.2 to be rendered"
+    assert "0.6" in html, "Expected speculative_accepts_rate_avg=0.6 to be rendered"
 
 
 @pytest.mark.asyncio
 async def test_api_telemetry_latest_empty(test_client):
+    """Test API returns empty when no data exists."""
+    response = test_client.get("/api/telemetry/latest")
+    
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+@pytest.mark.asyncio
+async def test_no_htmx_json_dump_pattern_in_template():
     """Test that dashboard template has no hx-swap='outerHTML' on telemetry endpoints."""
     import re
     from pathlib import Path
@@ -240,7 +252,7 @@ async def test_api_telemetry_latest_empty(test_client):
     content = template_path.read_text()
     
     # Check that no hx-swap='outerHTML' appears on any hx-get for /api/telemetry endpoints
-    # Pattern: hx-get="/api/telemetry/..." ... hx-swap="outerHTML"
+    # Pattern: hx-get="api/telemetry/..." ... hx-swap="outerHTML"
     pattern = r'hx-get=["\']/(?:api/telemetry/[^"\']*)["\'][^>]*hx-swap=["\']outerHTML["\']'
     matches = re.findall(pattern, content)
     

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Catalog - Monitor</title>
     <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10"></script>
+{% set nav_active = 'comparison' %}
     <style>
         * {
             margin: 0;
@@ -229,11 +230,7 @@
 </head>
 <body>
     <div class="container">
-        <div class="nav-links">
-            <a href="/">Dashboard</a>
-            <a href="/catalog/comparison" class="active">Comparison</a>
-            <a href="/catalog/timeline">Timeline</a>
-        </div>
+        {% include '_nav.html' %}
         
         {% block content %}{% endblock %}
     </div>

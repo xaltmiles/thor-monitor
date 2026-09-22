@@ -1,3 +1,4 @@
+{% set nav_active = 'dashboard' %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -113,6 +114,8 @@
 </head>
 <body>
     <div class="container">
+        {% include '_nav.html' %}
+        
         <h1>Monitor Dashboard</h1>
         
         <!-- Warning Banner -->

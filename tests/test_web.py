@@ -173,3 +173,55 @@ async def test_no_htmx_json_dump_pattern_in_template():
         "as they return raw JSON that would be rendered as text. "
         f"Matches: {matches}"
     )
+
+
+def test_dashboard_page_has_nav_links(test_client):
+    """Test dashboard page contains navigation links to all other pages."""
+    response = test_client.get("/")
+    assert response.status_code == 200
+    html = response.text
+    
+    # Check for all navigation links
+    assert 'href="/"' in html
+    assert 'href="/catalog/comparison"' in html
+    assert 'href="/catalog/timeline"' in html
+    assert 'href="/settings"' in html
+
+
+def test_comparison_page_has_nav_links(test_client):
+    """Test comparison page contains navigation links to all other pages."""
+    response = test_client.get("/catalog/comparison")
+    assert response.status_code == 200
+    html = response.text
+    
+    # Check for all navigation links
+    assert 'href="/"' in html
+    assert 'href="/catalog/comparison"' in html
+    assert 'href="/catalog/timeline"' in html
+    assert 'href="/settings"' in html
+
+
+def test_timeline_page_has_nav_links(test_client):
+    """Test timeline page contains navigation links to all other pages."""
+    response = test_client.get("/catalog/timeline")
+    assert response.status_code == 200
+    html = response.text
+    
+    # Check for all navigation links
+    assert 'href="/"' in html
+    assert 'href="/catalog/comparison"' in html
+    assert 'href="/catalog/timeline"' in html
+    assert 'href="/settings"' in html
+
+
+def test_settings_page_has_nav_links(test_client):
+    """Test settings page contains navigation links to all other pages."""
+    response = test_client.get("/settings")
+    assert response.status_code == 200
+    html = response.text
+    
+    # Check for all navigation links
+    assert 'href="/"' in html
+    assert 'href="/catalog/comparison"' in html
+    assert 'href="/catalog/timeline"' in html
+    assert 'href="/settings"' in html

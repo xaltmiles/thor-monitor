@@ -19,3 +19,7 @@ Five canonical triage labels mapped directly to their role names: `needs-triage`
 ## Domain docs
 
 Single-context layout: one `CONTEXT.md` at the repo root, ADRs in `docs/adr/`. See `docs/agents/domain.md`.
+
+## Workflows
+
+When user asks to execute a workflow, it is **mandatory** to use it. If you do not find the workflow definition, state this to the user

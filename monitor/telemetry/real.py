@@ -184,15 +184,14 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
     
         aggregate_tok_s = sum(all_slot_throughputs)
     
-    ### Metric source verification
+    ### Studio metric source (verified)
     
-    Studio's tok/s display has been verified against the running unsloth studio
-    instance at http://192.168.0.127:8889 (proxying llama-server /metrics):
+    Studio displays `timings.predicted_per_second` from llama-server's chat-completion response:
     
-    - Studio displays: `llamacpp:predicted_tokens_seconds` (Prometheus gauge)
-    - Source: llama-server `/metrics` endpoint (e.g., http://localhost:38435/metrics)
-    - Type: Gauge (current instantaneous value)
-    - Scope: Per-slot throughput (what each individual request experiences)
+    - Studio displays: `timings.predicted_per_second` from the chat-completion response
+    - Source: llama-server's `/v1/chat/completions` endpoint `timings` object
+    - Type: Per-request computed rate (client-computed from stream chunks)
+    - Scope: Per-request throughput (what each individual request experiences)
     
     The dashboard uses `llamacpp:tokens_predicted_total` (Prometheus counter),
     calculating rate as counter delta / elapsed time between samples.
@@ -203,10 +202,10 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
     - Each slot processes ~20 tok/s individually
     - Counter accumulates ~80 tok/s total (all slots combined)
     - Dashboard reports ~80 tok/s (aggregate)
-    - Studio shows ~20 tok/s per slot (per-slot)
+    - Studio shows ~20 tok/s per request (per-request)
     
     Both measurements are correct for their intended purposes:
-    - Use **per-slot tok/s** to understand model latency/response time
+    - Use **per-request tok/s** to understand model latency/response time
     - Use **aggregate tok/s** to understand server capacity/utilization
     
     See also: README section "Understanding tok/s: aggregate vs per-request throughput"

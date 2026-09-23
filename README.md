@@ -282,9 +282,9 @@ This counter accumulates tokens from **all parallel slots**. With `--parallel 4`
 
 ### Unsloth Studio (per-slot throughput)
 
-Unsloth Studio displays `llamacpp:predicted_tokens_seconds` (a Prometheus gauge) which represents the **instantaneous per-slot** tok/s. This shows how fast each individual request is being processed.
+Unsloth Studio displays `timings.predicted_per_second` from the llama-server's chat-completion response. This is computed per-request and shows how fast each individual request is being processed.
 
-> **Verified**: This metric is read directly from the llama-server's `/metrics` endpoint at `http://<llama-server>:<port>/metrics`. Studio proxies this endpoint and displays the `predicted_tokens_seconds` gauge value.
+> **Verified**: Studio receives `timings.predicted_per_second` from llama-server's chat-completion endpoint response (the `timings` object contains `predicted_per_second`, `prompt_ms`, and other per-request metrics). Studio does NOT read the `/metrics` endpoint; it displays the per-request rate from the response, not the Prometheus gauge.
 
 ### Why they differ
 

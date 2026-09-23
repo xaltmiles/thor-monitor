@@ -130,6 +130,7 @@ async def init_db():
                 gpu_before TEXT,
                 gpu_during TEXT,
                 gpu_after TEXT,
+                samples_during TEXT,
                 created_at TEXT NOT NULL,
                 state TEXT,
                 abort_reason TEXT,
@@ -140,7 +141,7 @@ async def init_db():
         # Migrate stores created before later columns existed
         cursor = await db.execute("PRAGMA table_info(benchmark_runs)")
         br_columns = [col[1] for col in await cursor.fetchall()]
-        for col in ("state", "abort_reason", "workload_results"):
+        for col in ("state", "abort_reason", "workload_results", "samples_during"):
             if col not in br_columns:
                 logger.info("Adding %s column to benchmark_runs", col)
                 await db.execute(f"ALTER TABLE benchmark_runs ADD COLUMN {col} TEXT")
@@ -603,7 +604,8 @@ async def insert_benchmark_run(
     memory_after: str = None,
     gpu_before: str = None,
     gpu_during: str = None,
-    gpu_after: str = None
+    gpu_after: str = None,
+    samples_during: str = None
 ) -> int:
     """Insert a benchmark run into the database.
     
@@ -629,6 +631,7 @@ async def insert_benchmark_run(
         gpu_before: JSON string of GPU samples before run
         gpu_during: JSON string of GPU samples during run
         gpu_after: JSON string of GPU samples after run
+        samples_during: JSON string of per-interval samples during run
         
     Returns:
         Benchmark run ID
@@ -641,14 +644,14 @@ async def insert_benchmark_run(
                  model_name, model_quant, context_length, server_type,
                 server_port, state, workload_params, tags, workload_results,
                  memory_before, memory_during, memory_after,
-                 gpu_before, gpu_during, gpu_after, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 gpu_before, gpu_during, gpu_after, samples_during, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
             (model_id, workload_type, standard_run, total_time, ttft,
              prompt_tok_s, gen_tok_s, peak_gen_tok_s, concurrent_throughput,
              model_name, model_quant, context_length, server_type,
              server_port, state, workload_params, tags, workload_results,
              memory_before, memory_during, memory_after,
-             gpu_before, gpu_during, gpu_after,
+             gpu_before, gpu_during, gpu_after, samples_during,
              datetime.now(timezone.utc).isoformat())
         )
         await db.commit()
@@ -677,7 +680,8 @@ async def update_benchmark_run(
     gpu_before: str = None,
     gpu_during: str = None,
     memory_after: str = None,
-    gpu_after: str = None
+    gpu_after: str = None,
+    samples_during: str = None
 ) -> None:
     """Update a benchmark run (typically to update with final metrics and after-run samples).
     
@@ -693,6 +697,7 @@ async def update_benchmark_run(
         gpu_during: JSON string of GPU samples during run
         memory_after: JSON string of memory samples after run
         gpu_after: JSON string of GPU samples after run
+        samples_during: JSON string of per-interval samples during run
     """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -711,11 +716,12 @@ async def update_benchmark_run(
                     gpu_before = COALESCE(?, gpu_before),
                     gpu_during = COALESCE(?, gpu_during),
                     memory_after = COALESCE(?, memory_after),
-                    gpu_after = COALESCE(?, gpu_after)
+                    gpu_after = COALESCE(?, gpu_after),
+                    samples_during = COALESCE(?, samples_during)
                 WHERE id = ?""",
             (state, abort_reason, total_time, ttft, prompt_tok_s, gen_tok_s,
              peak_gen_tok_s, concurrent_throughput, workload_results, memory_before, memory_during,
-             gpu_before, gpu_during, memory_after, gpu_after, run_id)
+             gpu_before, gpu_during, memory_after, gpu_after, samples_during, run_id)
         )
         await db.commit()
 

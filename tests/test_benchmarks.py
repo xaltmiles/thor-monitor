@@ -102,6 +102,55 @@ class TestBenchmarkStore:
             monitor.store.DB_PATH = original_path
     
     @pytest.mark.asyncio
+    async def test_update_benchmark_run_with_samples_during(self, temp_db_path):
+        """Test updating a benchmark run with samples_during."""
+        from monitor.store import DB_PATH as original_path
+        import monitor.store
+        monitor.store.DB_PATH = temp_db_path
+        
+        try:
+            await init_db()
+            
+            # Insert a benchmark run
+            run_id = await insert_benchmark_run(
+                model_id=1,
+                workload_type="standard",
+                standard_run=True,
+                model_name="test-model",
+                server_type="llama-server"
+            )
+            
+            # Sample data during run
+            samples_during = json.dumps([
+                {"timestamp": "2024-01-01T00:00:00+00:00", "memory_used": {"memory_used": 16_000_000_000}, "gpu": {"gpu_temp": 70.0, "gpu_util": 45.0, "gpu_power": 150.0}},
+                {"timestamp": "2024-01-01T00:00:01+00:00", "memory_used": {"memory_used": 16_500_000_000}, "gpu": {"gpu_temp": 72.0, "gpu_util": 50.0, "gpu_power": 155.0}},
+                {"timestamp": "2024-01-01T00:00:02+00:00", "memory_used": {"memory_used": 17_000_000_000}, "gpu": {"gpu_temp": 74.0, "gpu_util": 55.0, "gpu_power": 160.0}},
+            ])
+            
+            # Update with samples_during
+            await update_benchmark_run(
+                run_id=run_id,
+                total_time=10.5,
+                samples_during=samples_during
+            )
+            
+            # Retrieve and verify
+            run = await get_benchmark_run(run_id)
+            
+            assert run["total_time"] == 10.5
+            assert run["samples_during"] == samples_during
+            
+            # Parse and verify structure
+            parsed = json.loads(run["samples_during"])
+            assert len(parsed) == 3
+            assert "timestamp" in parsed[0]
+            assert "memory_used" in parsed[0]
+            assert "gpu" in parsed[0]
+            
+        finally:
+            monitor.store.DB_PATH = original_path
+    
+    @pytest.mark.asyncio
     async def test_store_with_footprint_samples(self, temp_db_path):
         """Test benchmark run with memory and GPU footprint samples."""
         from monitor.store import DB_PATH as original_path

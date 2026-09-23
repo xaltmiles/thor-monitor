@@ -82,6 +82,21 @@ def create_app():
         content = await render_template("plots.html", {})
         return HTMLResponse(content=content)
     
+    @app.get("/runs/{run_id}", response_class=HTMLResponse)
+    async def run_plot(run_id: int):
+        """Render a single benchmark run's timeline plot."""
+        from ..store import get_benchmark_run
+        
+        run = await get_benchmark_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        
+        content = await render_template("run_plot.html", {
+            "run": run,
+            "run_id": run_id,
+        })
+        return HTMLResponse(content=content)
+    
     @app.get("/", response_class=HTMLResponse)
     async def dashboard():
         """Render the main dashboard page."""
@@ -339,6 +354,35 @@ def create_app():
         if run:
             return {"run": run}
         raise HTTPException(status_code=404, detail="Run not found")
+    
+    @app.get("/api/benchmarks/run/{run_id}/samples")
+    async def api_benchmarks_run_samples(run_id: int):
+        """Get samples for a specific benchmark run timeline."""
+        from ..store import get_benchmark_run
+        import json
+        
+        run = await get_benchmark_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        
+        # Return samples_during as a list, parsing JSON if present
+        samples_during = run.get("samples_during")
+        if samples_during:
+            try:
+                samples = json.loads(samples_during)
+            except (json.JSONDecodeError, TypeError):
+                samples = []
+        else:
+            samples = []
+        
+        return {"samples": samples}
+    
+    @app.get("/api/benchmarks/run/{run_id}/timeline")
+    async def api_benchmarks_run_timeline(run_id: int):
+        """Get timeline data for a specific benchmark run."""
+        from ..web.catalog import get_run_samples
+        
+        return await get_run_samples(run_id)
     
     @app.get("/api/settings")
     async def api_get_settings():

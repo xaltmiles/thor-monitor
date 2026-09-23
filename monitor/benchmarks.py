@@ -346,14 +346,33 @@ class BenchmarkRunner:
             # Sample footprint before run
             footprint_before = await self._sample_footprint()
             
-            # Load suite settings and run workloads
-            suite_params = await self._get_suite_params(workload_params)
-            workload_results = await self._run_suite(
-                run.server_port,
-                suite_params,
-                model_name=run.model_name,
-                on_result=self._make_progress_writer(run.run_id),
-            )
+            # Start sampling telemetry during the run
+            samples_during = []
+            sample_task = asyncio.create_task(self._sample_during_run(samples_during))
+            
+            try:
+                # Load suite settings and run workloads
+                suite_params = await self._get_suite_params(workload_params)
+                workload_results = await self._run_suite(
+                    run.server_port,
+                    suite_params,
+                    model_name=run.model_name,
+                    on_result=self._make_progress_writer(run.run_id),
+                )
+            finally:
+                # Stop sampling
+                sample_task.cancel()
+                try:
+                    await sample_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Sample footprint during run (at end of workload suite)
+            footprint_during = await self._sample_footprint()
+            
+            # Sample footprint after run
+            await asyncio.sleep(1)  # Brief wait for settling
+            footprint_after = await self._sample_footprint()
             
             # Calculate aggregate metrics from all workloads
             total_time = sum(w.total_time for w in workload_results.values())
@@ -376,19 +395,15 @@ class BenchmarkRunner:
             prompt_tok_s = prompt_tok_s or 0
             aggregate_tok_s = aggregate_tok_s or 0
             
-            # Sample footprint during run (continuously during generation)
-            footprint_during = await self._sample_footprint()
-            
-            # Sample footprint after run
-            await asyncio.sleep(1)  # Brief wait for settling
-            footprint_after = await self._sample_footprint()
-            
             # Store workload results as JSON
             results_json = json.dumps({
                 name: result.to_dict() for name, result in workload_results.items()
             })
             
-            # Update run with final metrics
+            # Store samples_during as JSON
+            samples_during_json = json.dumps(samples_during)
+            
+            # Update run with final metrics and samples_during
             await update_benchmark_run(
                 run_id=run.run_id,
                 total_time=total_time,
@@ -398,6 +413,8 @@ class BenchmarkRunner:
                 peak_gen_tok_s=peak_gen_tok_s,
                 concurrent_throughput=aggregate_tok_s,
                 workload_results=results_json,
+                samples_during=samples_during_json,
+                # Also store footprint samples for compatibility with catalog
                 memory_before=json.dumps(footprint_before.get("memory", {})),
                 memory_during=json.dumps(footprint_during.get("memory", {})),
                 memory_after=json.dumps(footprint_after.get("memory", {})),
@@ -810,6 +827,34 @@ class BenchmarkRunner:
             "memory": memory_data,
             "gpu": {**gpu_data, "processes": gpu_memory_data.get("gpu_processes", [])}
         }
+    
+    async def _sample_during_run(self, samples_list: list) -> None:
+        """Collect telemetry samples at 1 Hz during a benchmark run.
+        
+        This runs as a background task that samples until cancelled.
+        Collects the same data as telemetry_samples table but simplified for run timeline.
+        
+        Args:
+            samples_list: List to append samples to (shared with caller)
+        """
+        while True:
+            try:
+                # Collect telemetry data
+                sample = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "memory_used": await self._memory_source.collect(),
+                    "gpu": await self._gpu_source.collect(),
+                }
+                samples_list.append(sample)
+                # Wait approximately 1 second between samples
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                # Log error but continue sampling (or stop if telemetry fails)
+                logger.warning(f"Error collecting sample during run: {e}")
+                # Still wait before next attempt
+                await asyncio.sleep(1.0)
 
 
 class ShortWorkloadRunner:

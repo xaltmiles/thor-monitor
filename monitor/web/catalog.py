@@ -216,3 +216,32 @@ async def get_timeline_data() -> Dict[str, Any]:
         "total_runs": len(runs),
         "total_sessions": len(sessions),
     }
+
+
+async def get_run_samples(run_id: int) -> Dict[str, Any]:
+    """Get samples for a specific benchmark run timeline.
+    
+    Args:
+        run_id: ID of the benchmark run
+        
+    Returns:
+        Dict with 'samples' key containing list of samples
+    """
+    from ..store import get_benchmark_run
+    import json
+    
+    run = await get_benchmark_run(run_id)
+    if not run:
+        return {"samples": []}
+    
+    # Return samples_during as a list, parsing JSON if present
+    samples_during = run.get("samples_during")
+    if samples_during:
+        try:
+            samples = json.loads(samples_during)
+        except (json.JSONDecodeError, TypeError):
+            samples = []
+    else:
+        samples = []
+    
+    return {"samples": samples}

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Run Timeline - Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #00d4ff;
+        }
+        
+        .subtitle {
+            color: #888;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        
+        .run-info {
+            background: #16213e;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .run-info-item {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .run-info-label {
+            color: #888;
+            font-size: 0.85em;
+        }
+        
+        .run-info-value {
+            color: #00d4ff;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .back-btn {
+            background: #00d4ff;
+            color: #16213e;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        
+        .back-btn:hover {
+            background: #00a8cc;
+            color: #fff;
+        }
+        
+        .charts-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        
+        .chart-card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .chart-card h3 {
+            color: #00d4ff;
+            font-size: 1em;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #1f3b6e;
+        }
+        
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+        
+        .chart-legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85em;
+        }
+        
+        .legend-color {
+            width: 16px;
+            height: 3px;
+            border-radius: 2px;
+        }
+        
+        .empty-state {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            color: #888;
+        }
+        
+        .chart-footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #1f3b6e;
+            color: #666;
+            font-size: 0.9em;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {% set nav_active = 'plots' %}
+        {% include '_nav.html' %}
+        
+        <div class="header">
+            <h1>Run Timeline</h1>
+            <a href="/plots" class="back-btn">← Back to Live View</a>
+        </div>
+        <p class="subtitle">Timeline of system metrics during benchmark run #{{ run_id }}</p>
+        
+        <div class="run-info">
+            <div class="run-info-item">
+                <span class="run-info-label">Model</span>
+                <span class="run-info-value">{{ run.model_name or 'N/A' }} ({{ run.model_quant or 'N/A' }})</span>
+            </div>
+            <div class="run-info-item">
+                <span class="run-info-label">Server</span>
+                <span class="run-info-value">{{ run.server_type or 'N/A' }}:{{ run.server_port or 'N/A' }}</span>
+            </div>
+            <div class="run-info-item">
+                <span class="run-info-label">Workload</span>
+                <span class="run-info-value">{{ run.workload_type or 'N/A' }}</span>
+            </div>
+            <div class="run-info-item">
+                <span class="run-info-label">Duration</span>
+                <span class="run-info-value">{{ "%.1f"|format(run.total_time or 0) }}s</span>
+            </div>
+            <div class="run-info-item">
+                <span class="run-info-label">Gen tok/s</span>
+                <span class="run-info-value">{{ "%.1f"|format(run.gen_tok_s or 0) }}</span>
+            </div>
+            <div class="run-info-item">
+                <span class="run-info-label">TTFT</span>
+                <span class="run-info-value">{{ "%.3f"|format(run.ttft or 0) }}s</span>
+            </div>
+        </div>
+        
+        <div class="charts-container">
+            <div class="chart-card">
+                <h3>Memory Usage</h3>
+                <div class="chart-wrapper">
+                    <canvas id="memory-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #00d4ff;"></div>
+                        <span>Used (GiB)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>GPU Temperature</h3>
+                <div class="chart-wrapper">
+                    <canvas id="gpu-temp-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ff6b6b;"></div>
+                        <span>Temperature (°C)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>GPU Utilization</h3>
+                <div class="chart-wrapper">
+                    <canvas id="gpu-util-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ffd93d;"></div>
+                        <span>Utilization (%)</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>GPU Power</h3>
+                <div class="chart-wrapper">
+                    <canvas id="gpu-power-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #d400ff;"></div>
+                        <span>Power (W)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="chart-footer">
+            Timeline data from benchmark run #{{ run_id }}
+        </div>
+    </div>
+    
+    <script>
+        // Store charts globally so we can destroy and recreate them
+        const charts = {};
+        
+        const COLORS = {
+            ollama: '#00d4ff',
+            ollamaHover: '#33e0ff',
+            gpuTemp: '#ff6b6b',
+            gpuTempHover: '#ff8888',
+            gpuUtil: '#ffd93d',
+            gpuUtilHover: '#ffea66',
+            gpuPower: '#d400ff',
+            gpuPowerHover: '#e633ff',
+        };
+        
+        async function fetchSamples(runId) {
+            try {
+                const response = await fetch(`/api/benchmarks/run/${runId}/samples`);
+                const data = await response.json();
+                return data.samples;
+            } catch (error) {
+                console.error('Error fetching samples:', error);
+                return [];
+            }
+        }
+        
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString();
+        }
+        
+        function bytesToGiB(bytes) {
+            // memory_used is already in bytes
+            return (bytes / (1024 * 1024 * 1024)).toFixed(1);
+        }
+        
+        function destroyCharts() {
+            Object.values(charts).forEach(chart => {
+                if (chart) {
+                    chart.destroy();
+                }
+            });
+            Object.keys(charts).forEach(key => delete charts[key]);
+        }
+        
+        function createLineChart(ctx, datasets, labels) {
+            const chartData = {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets.map(d => ({
+                        label: d.label,
+                        data: d.data,
+                        borderColor: d.borderColor,
+                        hoverBorderColor: d.hoverBorderColor,
+                        backgroundColor: d.fill ? d.borderColor : undefined,
+                        borderWidth: d.borderWidth || 2,
+                        pointRadius: d.pointRadius !== undefined ? d.pointRadius : 0,
+                        pointHoverRadius: d.pointHoverRadius !== undefined ? d.pointHoverRadius : 4,
+                        fill: d.fill || false,
+                        tension: d.tension !== undefined ? d.tension : 0.4,
+                        spanGaps: true,
+                    })),
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            display: false,
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: '#16213e',
+                            titleColor: '#00d4ff',
+                            bodyColor: '#eee',
+                            borderColor: '#00d4ff',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                color: '#1f3b6e',
+                            },
+                            ticks: {
+                                color: '#888',
+                                maxTicksLimit: 10,
+                                callback: function(val, index, ticks) {
+                                    if (index % Math.ceil(labels.length / 10) === 0) {
+                                        return formatTimestamp(labels[val]);
+                                    }
+                                    return '';
+                                }
+                            }
+                        },
+                        y: {
+                            grid: {
+                                color: '#1f3b6e',
+                            },
+                            ticks: {
+                                color: '#888',
+                            }
+                        }
+                    }
+                }
+            };
+            
+            return new Chart(ctx, chartData);
+        }
+        
+        function updateCharts(data) {
+            if (!data || data.length === 0) {
+                document.querySelector('.charts-container').innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <p>No timeline data available for this run.</p>
+                        <p>The run may not have captured telemetry samples.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            destroyCharts();
+            
+            const timestamps = data.map(row => row.timestamp);
+            
+            // Memory chart
+            const memoryUsed = data.map(row => {
+                const memory = row.memory_used || {};
+                if (memory.memory_used !== undefined) {
+                    return bytesToGiB(memory.memory_used);
+                }
+                return null;
+            });
+            
+            const memoryCtx = document.getElementById('memory-chart').getContext('2d');
+            charts.memory = createLineChart(memoryCtx, [
+                { label: 'Used', data: memoryUsed, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false }
+            ], timestamps);
+            
+            // GPU Temp chart
+            const gpuTemp = data.map(row => {
+                const gpu = row.gpu || {};
+                return gpu.gpu_temp !== undefined ? gpu.gpu_temp : null;
+            });
+            const gpuTempCtx = document.getElementById('gpu-temp-chart').getContext('2d');
+            charts.gpuTemp = createLineChart(gpuTempCtx, [
+                { label: 'Temperature', data: gpuTemp, borderColor: COLORS.gpuTemp, hoverBorderColor: COLORS.gpuTempHover, fill: false }
+            ], timestamps);
+            
+            // GPU Util chart
+            const gpuUtil = data.map(row => {
+                const gpu = row.gpu || {};
+                return gpu.gpu_util !== undefined ? gpu.gpu_util : null;
+            });
+            const gpuUtilCtx = document.getElementById('gpu-util-chart').getContext('2d');
+            charts.gpuUtil = createLineChart(gpuUtilCtx, [
+                { label: 'Utilization', data: gpuUtil, borderColor: COLORS.gpuUtil, hoverBorderColor: COLORS.gpuUtilHover, fill: false }
+            ], timestamps);
+            
+            // GPU Power chart
+            const gpuPower = data.map(row => {
+                const gpu = row.gpu || {};
+                return gpu.gpu_power !== undefined ? gpu.gpu_power : null;
+            });
+            const gpuPowerCtx = document.getElementById('gpu-power-chart').getContext('2d');
+            charts.gpuPower = createLineChart(gpuPowerCtx, [
+                { label: 'Power', data: gpuPower, borderColor: COLORS.gpuPower, hoverBorderColor: COLORS.gpuPowerHover, fill: false }
+            ], timestamps);
+        }
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async function() {
+            const samples = await fetchSamples({{ run_id }});
+            updateCharts(samples);
+        });
+    </script>
+</body>
+</html>

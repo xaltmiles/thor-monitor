@@ -488,9 +488,12 @@
                 ? await fetchData(limit, lastTimestamp)
                 : await fetchData(limit);
             
-            if (!isIncremental && data.length > 0) {
-                // On full fetch, update lastTimestamp to oldest data point
-                lastTimestamp = data[0].timestamp;
+            // Update lastTimestamp for both full and incremental fetches
+            if (data.length > 0) {
+                // data is already reversed (newest-first -> oldest-first)
+                // So data[0] is oldest, data[data.length-1] is newest
+                // Use the newest sample's timestamp as the cursor for next incremental fetch
+                lastTimestamp = data[data.length - 1].timestamp;
             }
             
             updateCharts(data);
@@ -519,10 +522,11 @@
                 });
             });
             
-            // Auto-refresh every 30 seconds - use incremental fetch
+            // Auto-refresh every 30 seconds - use incremental fetch when possible
             setInterval(async function() {
-                if (dataFetched && lastTimestamp) {
-                    await loadCharts(currentLimit, true);
+                if (dataFetched) {
+                    // If we have a cursor, try incremental; otherwise do full fetch to get initial data
+                    await loadCharts(currentLimit, lastTimestamp !== null);
                 }
             }, 30000);
         });

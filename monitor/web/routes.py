@@ -212,30 +212,6 @@ def create_app():
             "warning": "Multiple loaded models detected: llama3, mistral"
         }
     
-    @app.get("/api/telemetry/latest")
-    async def api_telemetry_latest():
-        """Get the latest telemetry sample."""
-        return await get_latest_telemetry()
-    
-    @app.get("/api/telemetry/history")
-    async def api_telemetry_history(limit: int = 60):
-        """Get recent telemetry history (legacy - returns all columns)."""
-        return await get_telemetry_history(limit)
-    
-    @app.get("/api/plots/history")
-    async def api_plots_history(limit: int = 60, since: str = None):
-        """Get telemetry history for plots page.
-        
-        Returns only columns needed for plots (no process_memory, gpu_process_memory).
-        Supports ?since=<timestamp> for incremental fetch.
-        """
-        if since:
-            # Incremental fetch: get samples since the given timestamp
-            return await get_telemetry_history_by_range(start_time=since, limit=limit)
-        else:
-            # Full fetch: get last N samples
-            return await get_telemetry_history_for_plots(limit)
-    
     @app.get("/api/fixtures/llama-stats")
     async def api_fixture_llama_stats():
         """Get fixture llama-server stats for testing."""

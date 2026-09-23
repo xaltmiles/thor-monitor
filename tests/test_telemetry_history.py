@@ -190,3 +190,112 @@ async def test_telemetry_history_ordering(temp_db_path):
             assert history[i]["timestamp"] >= history[i + 1]["timestamp"]
     finally:
         monitor.store.DB_PATH = original_path
+
+
+@pytest.mark.asyncio
+async def test_get_telemetry_history_by_range_with_since(temp_db_path):
+    """Test that get_telemetry_history_by_range works with since parameter for incremental fetch."""
+    from monitor.store import DB_PATH as original_path, get_telemetry_history_by_range, get_telemetry_history_for_plots
+    import monitor.store
+    import time
+    monitor.store.DB_PATH = temp_db_path
+    
+    try:
+        await init_db()
+        
+        # Insert samples with explicit timestamps using direct SQL
+        # We need to bypass insert_telemetry_sample since it always uses current time
+        async with monitor.store.aiosqlite.connect(temp_db_path) as db:
+            # Insert first batch (older samples)
+            for i in range(3):
+                ts = f"2024-01-01T00:{i:02d}:00+00:00"
+                await db.execute(
+                    """INSERT INTO telemetry_samples 
+                       (timestamp, memory_total, memory_free, memory_used, gpu_util, gpu_temp, gpu_power, 
+                        process_memory, gpu_process_memory, llama_stats, ollama_stats)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (ts, 32_000_000_000, 16_000_000_000, 16_000_000_000 + i * 1_000_000,
+                     45.0 + i, 70.0 + i, 150.0 + i, "[]", "[]",
+                     json.dumps({"generated_tokens_rate": 10.0 + i * 0.1}),
+                     json.dumps({"ollama_generated_tokens_rate": 15.0 + i * 0.1}))
+                )
+            await db.commit()
+        
+        # Get the timestamp after first batch
+        async with monitor.store.aiosqlite.connect(temp_db_path) as db:
+            async with db.execute(
+                "SELECT timestamp FROM telemetry_samples ORDER BY timestamp DESC LIMIT 1"
+            ) as cursor:
+                row = await cursor.fetchone()
+                since_cursor = row[0] if row else "2024-01-01T00:02:30+00:00"
+        
+        # Insert second batch (newer samples)
+        async with monitor.store.aiosqlite.connect(temp_db_path) as db:
+            for i in range(3, 6):
+                ts = f"2024-01-01T00:{i:02d}:00+00:00"
+                await db.execute(
+                    """INSERT INTO telemetry_samples 
+                       (timestamp, memory_total, memory_free, memory_used, gpu_util, gpu_temp, gpu_power,
+                        process_memory, gpu_process_memory, llama_stats, ollama_stats)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (ts, 32_000_000_000, 16_000_000_000, 16_000_000_000 + i * 1_000_000,
+                     45.0 + i, 70.0 + i, 150.0 + i, "[]", "[]",
+                     json.dumps({"generated_tokens_rate": 10.0 + i * 0.1}),
+                     json.dumps({"ollama_generated_tokens_rate": 15.0 + i * 0.1}))
+                )
+            await db.commit()
+        
+        # Test: get samples since the cursor (should return only the 2 newer samples)
+        history = await get_telemetry_history_by_range(start_time=since_cursor)
+        
+        # All returned samples should have timestamp >= since_cursor
+        for row in history:
+            assert row["timestamp"] >= since_cursor, f"Sample {row['timestamp']} should be >= {since_cursor}"
+            
+        # Verify only required columns are present
+        assert "timestamp" in history[0]
+        assert "gpu_util" in history[0]
+        assert "gpu_temp" in history[0]
+        assert "gpu_power" in history[0]
+        assert "memory_used" in history[0]
+        assert "memory_total" in history[0]
+        assert "llama_stats" in history[0]
+        assert "ollama_stats" in history[0]
+        assert "process_memory" not in history[0]
+        assert "gpu_process_memory" not in history[0]
+        
+    finally:
+        monitor.store.DB_PATH = original_path
+
+
+@pytest.mark.asyncio
+async def test_get_telemetry_history_by_range_empty_result(temp_db_path):
+    """Test that get_telemetry_history_by_range returns empty list when no matching samples."""
+    from monitor.store import DB_PATH as original_path, get_telemetry_history_by_range
+    import monitor.store
+    monitor.store.DB_PATH = temp_db_path
+    
+    try:
+        await init_db()
+        
+        # Insert some samples
+        await insert_telemetry_sample(
+            memory_total=32_000_000_000,
+            memory_free=16_000_000_000,
+            memory_used=16_000_000_000,
+            gpu_util=45.0,
+            gpu_temp=70.0,
+            gpu_power=150.0,
+            process_memory="[]",
+            gpu_process_memory="[]",
+            llama_stats="[]",
+            ollama_stats="[]"
+        )
+        
+        # Query for a time range far in the future with no samples
+        history = await get_telemetry_history_by_range(start_time="2099-01-01T00:00:00+00:00")
+        
+        assert history == [], f"Expected empty list, got {history}"
+        
+    finally:
+        monitor.store.DB_PATH = original_path

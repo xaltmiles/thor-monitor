@@ -534,8 +534,19 @@
                     const isIdle = !hasData || rate === null || rate === undefined || rate === 0 || rate < idleThreshold;
                     
                     // Determine if this is prompt or generate metric
-                    const isPrompt = id.includes('prompt');
-                    const metric = isPrompt ? 'prompt' : 'generate';
+                    // Only tok-prompt-* and tok-generate-* should be tracked in lastNonZeroRates
+                    // tok-spec-* (speculative rates) should NOT track to avoid overwriting generate
+                    const isPromptMetric = id.includes('prompt');
+                    const isGenerateMetric = id.includes('generate');
+                    
+                    if (!isPromptMetric && !isGenerateMetric) {
+                        // This is a special metric (e.g., tok-spec-*) - don't track in lastNonZeroRates
+                        el.textContent = isIdle ? 'idle' : rate.toFixed(1) + ' tok/s';
+                        el.className = isIdle ? 'metric-value idle' : 'metric-value';
+                        return;
+                    }
+                    
+                    const metric = isPromptMetric ? 'prompt' : 'generate';
                     
                     if (isIdle) {
                         el.textContent = 'idle';
@@ -581,8 +592,19 @@
                     const isIdle = !hasData || rate === null || rate === undefined || rate === 0 || rate < idleThreshold;
                     
                     // Determine if this is prompt or generate metric
-                    const isPrompt = id.includes('prompt');
-                    const metric = isPrompt ? 'prompt' : 'generate';
+                    // Only tok-prompt-* and tok-generate-* should be tracked in lastNonZeroRates
+                    // tok-spec-* (speculative rates) should not track to avoid overwriting generate
+                    const isPromptMetric = id.includes('prompt');
+                    const isGenerateMetric = id.includes('generate');
+                    
+                    if (!isPromptMetric && !isGenerateMetric) {
+                        // This is a special metric - don't track in lastNonZeroRates
+                        el.textContent = isIdle ? 'idle' : rate.toFixed(1) + ' tok/s';
+                        el.className = isIdle ? 'metric-value idle' : 'metric-value';
+                        return;
+                    }
+                    
+                    const metric = isPromptMetric ? 'prompt' : 'generate';
                     
                     if (isIdle) {
                         el.textContent = 'idle';

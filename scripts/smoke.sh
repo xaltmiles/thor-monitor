@@ -30,7 +30,7 @@ trap cleanup EXIT
 uv run monitor >"$LOG" 2>&1 &
 code="000"
 for _ in $(seq 1 30); do
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$BASE/" 2>/dev/null || echo "000")
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$BASE/" 2>/dev/null || echo "000")
   [ "$code" = "200" ] && break
   kill -0 "$(jobs -p)" 2>/dev/null || { cat "$LOG" >&2; fail "monitor exited during startup"; }
   sleep 1

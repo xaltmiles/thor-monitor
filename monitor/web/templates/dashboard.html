@@ -233,7 +233,8 @@
                     <span class="metric-value" id="tok-spec-llama">{{ llama.get('speculative_accepts_rate_avg', 0) | round(1) }}</span>
                 </div>
                 {% endif %}
-                <div id="tok-last-rate-llama" style="margin-top: 10px; font-size: 0.9em; color: #666; text-align: right;"></div>
+                <div id="tok-last-prompt-llama" style="margin-top: 10px; font-size: 0.9em; color: #666; text-align: right;"></div>
+                <div id="tok-last-gen-llama" style="font-size: 0.9em; color: #666; text-align: right;"></div>
             </div>
             
             <!-- Ollama Token Speeds Card -->
@@ -260,7 +261,8 @@
                         {%- endif -%}
                     </span>
                 </div>
-                <div id="tok-last-rate-ollama" style="margin-top: 10px; font-size: 0.9em; color: #666; text-align: right;"></div>
+                <div id="tok-last-prompt-ollama" style="margin-top: 10px; font-size: 0.9em; color: #666; text-align: right;"></div>
+                <div id="tok-last-gen-ollama" style="font-size: 0.9em; color: #666; text-align: right;"></div>
             </div>
             
             <!-- Loaded Model Card -->
@@ -465,21 +467,46 @@
         // Check probes every 5 seconds
         setInterval(checkProbes, 5000);
         
-        // Track last non-zero token rates for idle state display
+        // Track last non-zero token rates for display in "Last" lines
         // Each metric tracks its own last non-zero rate and timestamp
+        // lastNonZeroRates: { llama: { prompt: rate, generate: rate }, ollama: { prompt: rate, generate: rate } }
+        // lastNonZeroTimes: { llama: { prompt: timestamp, generate: timestamp }, ollama: { prompt: timestamp, generate: timestamp } }
         let lastNonZeroRates = {
-            prompt: null,
-            generate: null,
-            spec: null
+            llama: { prompt: null, generate: null },
+            ollama: { prompt: null, generate: null }
         };
         let lastNonZeroTimes = {
-            prompt: null,
-            generate: null,
-            spec: null
+            llama: { prompt: null, generate: null },
+            ollama: { prompt: null, generate: null }
         };
         
         // Store the detected server type from probe data
         let detectedServerType = 'llama-server'; // default
+        
+        // Last rate update interval (for updating "Ys ago" display)
+        const lastRateUpdateInterval = 1000;
+        
+        // Store the detected server type from probe data
+        let detectedServerType = 'llama-server'; // default
+        
+        // Update "Last: X tok/s · Ys ago" display for a specific metric
+        // This runs continuously to update the "Ys ago" counter
+        function updateLastRateDisplay(server, metric) {
+            const rate = lastNonZeroRates[server][metric];
+            const time = lastNonZeroTimes[server][metric];
+            
+            if (rate !== null && time !== null) {
+                const lastElId = server === 'llama' 
+                    ? metric === 'prompt' ? 'tok-last-prompt-llama' : 'tok-last-gen-llama'
+                    : metric === 'prompt' ? 'tok-last-prompt-ollama' : 'tok-last-gen-ollama';
+                
+                const lastEl = document.getElementById(lastElId);
+                if (lastEl) {
+                    const age = Math.round((Date.now() - time) / 1000);
+                    lastEl.textContent = `Last: ${rate} tok/s · ${age}s ago`;
+                }
+            }
+        }
         
         // Shared 1-second poller for token speeds, telemetry spans, and warning banner
         async function updateMetrics() {
@@ -489,7 +516,7 @@
                 const data = await response.json();
                 
                 // Update llama.cpp/unsloth token speeds
-                const updateLlamaTokenSpeed = (id, key, lastRateId, lastTimeId) => {
+                const updateLlamaTokenSpeed = (id, key) => {
                     const el = document.getElementById(id);
                     if (!el) return;
                     
@@ -509,34 +536,34 @@
                     const idleThreshold = 0.05;
                     const isIdle = !hasData || rate === null || rate === undefined || rate === 0 || rate < idleThreshold;
                     
+                    // Determine if this is prompt or generate metric
+                    const isPrompt = id.includes('prompt');
+                    const metric = isPrompt ? 'prompt' : 'generate';
+                    
                     if (isIdle) {
                         el.textContent = 'idle';
                         el.className = 'metric-value idle';
                         
-                        // Track last non-zero rate
-                        if (lastNonZeroRates[id] !== null && lastNonZeroTimes[id]) {
-                            const lastEl = document.getElementById(lastRateId);
-                            if (lastEl) {
-                                const age = Math.round((Date.now() - lastNonZeroTimes[id]) / 1000);
-                                lastEl.textContent = `Last: ${lastNonZeroRates[id]} tok/s · ${age}s ago`;
-                            }
+                        // Track last non-zero rate (only if we haven't seen one yet this session)
+                        // or if the current rate is the highest we've seen
+                        if (rate > 0) {
+                            lastNonZeroRates.llama[metric] = rate.toFixed(1);
+                            lastNonZeroTimes.llama[metric] = Date.now();
                         }
                     } else {
                         el.textContent = rate.toFixed(1) + ' tok/s';
                         el.className = 'metric-value';
                         
-                        // Update last non-zero tracking
-                        lastNonZeroRates[id] = rate.toFixed(1);
-                        lastNonZeroTimes[id] = Date.now();
-                        
-                        // Clear last rate display when active
-                        const lastEl = document.getElementById(lastRateId);
-                        if (lastEl) lastEl.textContent = '';
+                        // Update last non-zero tracking when we see a non-zero rate
+                        if (rate > 0) {
+                            lastNonZeroRates.llama[metric] = rate.toFixed(1);
+                            lastNonZeroTimes.llama[metric] = Date.now();
+                        }
                     }
                 };
                 
                 // Update ollama token speeds
-                const updateOllamaTokenSpeed = (id, key, lastRateId, lastTimeId) => {
+                const updateOllamaTokenSpeed = (id, key) => {
                     const el = document.getElementById(id);
                     if (!el) return;
                     
@@ -556,40 +583,39 @@
                     const idleThreshold = 0.05;
                     const isIdle = !hasData || rate === null || rate === undefined || rate === 0 || rate < idleThreshold;
                     
+                    // Determine if this is prompt or generate metric
+                    const isPrompt = id.includes('prompt');
+                    const metric = isPrompt ? 'prompt' : 'generate';
+                    
                     if (isIdle) {
                         el.textContent = 'idle';
                         el.className = 'metric-value idle';
                         
-                        // Track last non-zero rate
-                        if (lastNonZeroRates[id] !== null && lastNonZeroTimes[id]) {
-                            const lastEl = document.getElementById(lastRateId);
-                            if (lastEl) {
-                                const age = Math.round((Date.now() - lastNonZeroTimes[id]) / 1000);
-                                lastEl.textContent = `Last: ${lastNonZeroRates[id]} tok/s · ${age}s ago`;
-                            }
+                        // Track last non-zero rate (only if we haven't seen one yet this session)
+                        // or if the current rate is the highest we've seen
+                        if (rate > 0) {
+                            lastNonZeroRates.ollama[metric] = rate.toFixed(1);
+                            lastNonZeroTimes.ollama[metric] = Date.now();
                         }
                     } else {
                         el.textContent = rate.toFixed(1) + ' tok/s';
                         el.className = 'metric-value';
                         
-                        // Update last non-zero tracking
-                        lastNonZeroRates[id] = rate.toFixed(1);
-                        lastNonZeroTimes[id] = Date.now();
-                        
-                        // Clear last rate display when active
-                        const lastEl = document.getElementById(lastRateId);
-                        if (lastEl) lastEl.textContent = '';
+                        // Update last non-zero tracking when we see a non-zero rate
+                        if (rate > 0) {
+                            lastNonZeroRates.ollama[metric] = rate.toFixed(1);
+                            lastNonZeroTimes.ollama[metric] = Date.now();
+                        }
                     }
                 };
                 
                 // Update llama.cpp/unsloth speeds
-                updateLlamaTokenSpeed('tok-prompt-llama', 'prompt_tokens_rate', 'tok-last-rate-llama', 'tok-last-time-llama');
-                updateLlamaTokenSpeed('tok-generate-llama', 'generated_tokens_rate', 'tok-last-rate-llama', 'tok-last-time-llama');
-                updateLlamaTokenSpeed('tok-spec-llama', 'speculative_accepts_rate', 'tok-last-rate-llama', 'tok-last-time-llama');
+                updateLlamaTokenSpeed('tok-prompt-llama', 'prompt_tokens_rate');
+                updateLlamaTokenSpeed('tok-generate-llama', 'generated_tokens_rate');
                 
                 // Update ollama speeds
-                updateOllamaTokenSpeed('tok-prompt-ollama', 'ollama_prompt_tokens_rate', 'tok-last-rate-ollama', 'tok-last-time-ollama');
-                updateOllamaTokenSpeed('tok-generate-ollama', 'ollama_generated_tokens_rate', 'tok-last-rate-ollama', 'tok-last-time-ollama');
+                updateOllamaTokenSpeed('tok-prompt-ollama', 'ollama_prompt_tokens_rate');
+                updateOllamaTokenSpeed('tok-generate-ollama', 'ollama_generated_tokens_rate');
                 
                 // Update telemetry spans (GPU and Memory)
                 
@@ -644,6 +670,15 @@
         }
         setInterval(updateMetrics, 1000);
         updateMetrics();
+        
+        // Update last rate "Ys ago" display every second
+        setInterval(() => {
+            ['llama', 'ollama'].forEach(server => {
+                ['prompt', 'generate'].forEach(metric => {
+                    updateLastRateDisplay(server, metric);
+                });
+            });
+        }, lastRateUpdateInterval);
         
         // Update benchmark status and progress every 2 seconds
         async function updateBenchmarkStatus() {

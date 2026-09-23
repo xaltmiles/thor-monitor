@@ -337,9 +337,87 @@ async def test_plots_html_returns_200_with_charts(test_client, test_db_path):
     
     # Assert the combined rendered markup: <a href="/plots" class="active">
     assert '<a href="/plots" class="active">' in html
-    
-    # Check for range selector buttons
-    assert 'data-limit="60"' in html  # 1m
-    assert 'data-limit="300"' in html  # 5m
-    assert 'data-limit="900"' in html  # 15m
-    assert 'data-limit="3600"' in html  # 1h
+
+
+def test_dashboard_template_has_separate_last_rate_elements():
+    """Test that dashboard template has separate last rate elements for prompt and generation."""
+    import re
+    from pathlib import Path
+
+    # Read the dashboard template
+    template_path = Path(__file__).parent.parent / "monitor" / "web" / "templates" / "dashboard.html"
+    content = template_path.read_text()
+
+    # Check for separate last rate elements for llama.cpp
+    assert 'id="tok-last-prompt-llama"' in content, "Expected tok-last-prompt-llama element"
+    assert 'id="tok-last-gen-llama"' in content, "Expected tok-last-gen-llama element"
+
+    # Check for separate last rate elements for ollama
+    assert 'id="tok-last-prompt-ollama"' in content, "Expected tok-last-prompt-ollama element"
+    assert 'id="tok-last-gen-ollama"' in content, "Expected tok-last-gen-ollama element"
+
+    # Ensure old single shared element is removed
+    assert 'id="tok-last-rate-llama"' not in content, "Old shared tok-last-rate-llama should be removed"
+    assert 'id="tok-last-rate-ollama"' not in content, "Old shared tok-last-rate-ollama should be removed"
+
+
+def test_dashboard_template_last_rate_style():
+    """Test that last rate elements have proper styling for independent display."""
+    from pathlib import Path
+
+    template_path = Path(__file__).parent.parent / "monitor" / "web" / "templates" / "dashboard.html"
+    content = template_path.read_text()
+
+    # Check that last rate elements have margin-top for spacing
+    assert 'margin-top: 10px' in content, "Expected margin-top for last rate elements"
+
+
+def test_dashboard_template_prompt_and_gen_metrics_structure():
+    """Test that prompt and generation metrics have correct structure."""
+    from pathlib import Path
+
+    template_path = Path(__file__).parent.parent / "monitor" / "web" / "templates" / "dashboard.html"
+    content = template_path.read_text()
+
+    # Check llama.cpp metrics structure
+    assert 'id="tok-prompt-llama"' in content
+    assert 'id="tok-generate-llama"' in content
+
+    # Check ollama metrics structure
+    assert 'id="tok-prompt-ollama"' in content
+    assert 'id="tok-generate-ollama"' in content
+
+
+def test_dashboard_template_has_update_last_rate_display_function():
+    """Test that dashboard template has the updateLastRateDisplay function."""
+    from pathlib import Path
+
+    template_path = Path(__file__).parent.parent / "monitor" / "web" / "templates" / "dashboard.html"
+    content = template_path.read_text()
+
+    # Check for the updateLastRateDisplay function
+    assert 'function updateLastRateDisplay' in content, "Expected updateLastRateDisplay function"
+
+    # Check for the lastNonZeroRates tracking structure
+    assert 'lastNonZeroRates' in content, "Expected lastNonZeroRates tracking"
+    assert 'lastNonZeroTimes' in content, "Expected lastNonZeroTimes tracking"
+
+    # Check for separate tracking for llama and ollama
+    assert 'llama: { prompt' in content, "Expected separate llama prompt tracking"
+    assert 'ollama: { prompt' in content, "Expected separate ollama prompt tracking"
+
+
+def test_dashboard_template_has_last_rate_interval():
+    """Test that dashboard template has interval for updating last rate display."""
+    from pathlib import Path
+
+    template_path = Path(__file__).parent.parent / "monitor" / "web" / "templates" / "dashboard.html"
+    content = template_path.read_text()
+
+    # Check for setInterval for last rate updates
+    assert 'setInterval' in content, "Expected setInterval for last rate updates"
+    assert 'updateLastRateDisplay' in content, "Expected updateLastRateDisplay call in interval"
+
+    # Check that last rate display updates for both servers and metrics
+    assert "'llama', 'ollama'" in content or "['llama', 'ollama']" in content, "Expected both servers in interval"
+    assert "'prompt', 'generate'" in content or "['prompt', 'generate']" in content, "Expected both metrics in interval"

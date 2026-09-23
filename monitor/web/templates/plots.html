@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Plots - Monitor</title>
     <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.7.2/build/luxon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
     <style>
@@ -157,7 +159,7 @@
             <button class="range-btn" data-limit="3600" data-default="true">Last 1h</button>
             <button class="range-btn" data-limit="21600">Last 6h</button>
             <button class="range-btn" data-limit="86400">Last 24h</button>
-            <button class="range-btn" id="reset-zoom-btn">Reset Zoom</button>
+            <button class="range-btn" id="reset-zoom-btn" title="Reset zoom to show all data">Reset Zoom</button>
         </div>
         
         <div class="charts-container">
@@ -400,13 +402,11 @@
             // Update shared time range
             sharedTimeRange = { min: minTime, max: maxTime };
             
-            // Apply the same range to all other charts
+            // Apply the same range to all other charts using zoomScale API
             for (const name in charts) {
                 if (charts[name] !== sourceChart && charts[name]) {
                     lastZoomSource = charts[name];
-                    charts[name].zoomRange({
-                        x: { min: minTime, max: maxTime },
-                    });
+                    charts[name].zoomScale('x', { min: minTime, max: maxTime });
                 }
             }
         }
@@ -418,7 +418,7 @@
             
             for (const name in charts) {
                 if (charts[name]) {
-                    charts[name].showAllData();
+                    charts[name].resetZoom();
                 }
             }
         }
@@ -431,9 +431,7 @@
         // Apply saved zoom range to a chart
         function applyZoomRange(chart, minTime, maxTime) {
             if (minTime !== null && maxTime !== null) {
-                chart.zoomRange({
-                    x: { min: minTime, max: maxTime },
-                });
+                chart.zoomScale('x', { min: minTime, max: maxTime });
             }
         }
         
@@ -486,6 +484,7 @@
                             pan: {
                                 enabled: true,
                                 mode: 'x',
+                                modifierKey: 'shift',  // Require Shift+drag for panning
                                 onPanComplete: function({ chart }) {
                                     synchronizedZoom(chart);
                                 },
@@ -502,6 +501,7 @@
                                 drag: {
                                     enabled: true,
                                     mode: 'x',
+                                    modifierKey: null,  // Drag without modifier triggers zoom
                                 },
                                 onZoomComplete: function({ chart }) {
                                     synchronizedZoom(chart);
@@ -712,16 +712,15 @@
                     // Get new limit
                     currentLimit = parseInt(this.dataset.limit, 10);
                     
-                    // Reset zoom on button click (changing time range should reset zoom)
-                    resetZoom();
-                    
                     // Fetch and update charts (full fetch, not incremental)
                     await loadCharts(currentLimit, false);
                 });
             });
             
             // Reset zoom button handler
-            document.getElementById('reset-zoom-btn').addEventListener('click', resetZoom);
+            document.getElementById('reset-zoom-btn').addEventListener('click', function() {
+                resetZoom();
+            });
             
             // Auto-refresh every 30 seconds - use incremental fetch when possible
             setInterval(async function() {

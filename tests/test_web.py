@@ -611,3 +611,337 @@ async def test_api_plots_history_empty_database(test_client):
     assert response.status_code == 200
     data = response.json()
     assert data == []
+
+
+@pytest.mark.asyncio
+async def test_catalog_timeline_html_returns_200(test_client, test_db_path):
+    """Test that /catalog/timeline returns 200 and renders timeline events."""
+    from monitor.store import insert_benchmark_run
+    
+    # Insert a benchmark run
+    await insert_benchmark_run(
+        model_id=1,
+        workload_type="standard",
+        standard_run=True,
+        model_name="test-model",
+        server_type="llama-server",
+        tags="standard",
+        gen_tok_s=100.0,
+        ttft=0.5,
+    )
+    
+    response = test_client.get("/catalog/timeline")
+    
+    assert response.status_code == 200
+    html = response.text
+    
+    # Check that the timeline page renders
+    assert "Catalog: Timeline" in html
+    assert "benchmark run" in html
+
+
+@pytest.mark.asyncio
+async def test_catalog_timeline_html_links_to_run_plot(test_client, test_db_path):
+    """Test that /catalog/timeline includes links to individual run plots."""
+    from monitor.store import insert_benchmark_run
+    
+    # Insert a benchmark run
+    run_id = await insert_benchmark_run(
+        model_id=1,
+        workload_type="standard",
+        standard_run=True,
+        model_name="test-model",
+        server_type="llama-server",
+        tags="standard",
+        gen_tok_s=100.0,
+        ttft=0.5,
+    )
+    
+    response = test_client.get("/catalog/timeline")
+    
+    assert response.status_code == 200
+    html = response.text
+    
+    # Check that the timeline includes a link to the run plot
+    assert f"/runs/{run_id}" in html
+
+
+@pytest.mark.asyncio
+async def test_run_plot_html_returns_200_with_charts(test_client, test_db_path):
+    """Test that /runs/{run_id} returns 200 and contains expected chart containers."""
+    from monitor.store import insert_benchmark_run
+    import json
+    
+    # Insert a benchmark run with samples_during
+    samples_during = json.dumps([
+        {
+            "timestamp": "2024-01-01T00:00:00+00:00",
+            "memory_used": {"memory_used": 16_000_000_000},
+            "gpu": {"gpu_temp": 70.0, "gpu_util": 45.0, "gpu_power": 150.0},
+        },
+        {
+            "timestamp": "2024-01-01T00:00:01+00:00",
+            "memory_used": {"memory_used": 16_500_000_000},
+            "gpu": {"gpu_temp": 72.0, "gpu_util": 50.0, "gpu_power": 155.0},
+        },
+    ])
+    
+    run_id = await insert_benchmark_run(
+        model_id=1,
+        workload_type="standard",
+        standard_run=True,
+        model_name="test-model",
+        server_type="llama-server",
+        tags="standard",
+        total_time=10.0,
+        gen_tok_s=100.0,
+        ttft=0.5,
+        samples_during=samples_during,
+    )
+    
+    response = test_client.get(f"/runs/{run_id}")
+    
+    assert response.status_code == 200
+    html = response.text
+    
+    # Check for expected chart containers
+    assert 'id="memory-chart"' in html
+    assert 'id="gpu-temp-chart"' in html
+    assert 'id="gpu-util-chart"' in html
+    assert 'id="gpu-power-chart"' in html
+    assert 'id="tok-s-chart"' in html
+    
+    # Check that Back to Live View button exists
+    assert "Back to Live View" in html
+    assert "href=\"/plots\"" in html
+
+
+@pytest.mark.asyncio
+async def test_api_benchmarks_run_samples_returns_samples_during(test_client, test_db_path):
+    """Test that /api/benchmarks/run/{run_id}/samples returns the samples_during."""
+    from monitor.store import insert_benchmark_run
+    import json
+    
+    # Insert a benchmark run with samples_during
+    samples_during = json.dumps([
+        {
+            "timestamp": "2024-01-01T00:00:00+00:00",
+            "memory_used": {"memory_used": 16_000_000_000},
+            "gpu": {"gpu_temp": 70.0, "gpu_util": 45.0, "gpu_power": 150.0},
+            "llama_gen_rate": 100.0,
+            "llama_prompt_rate": 10.0,
+            "ollama_gen_rate": 50.0,
+        },
+        {
+            "timestamp": "2024-01-01T00:00:01+00:00",
+            "memory_used": {"memory_used": 16_500_000_000},
+            "gpu": {"gpu_temp": 72.0, "gpu_util": 50.0, "gpu_power": 155.0},
+            "llama_gen_rate": 105.0,
+            "ollama_gen_rate": 55.0,
+        },
+    ])
+    
+    run_id = await insert_benchmark_run(
+        model_id=1,
+        workload_type="standard",
+        standard_run=True,
+        model_name="test-model",
+        server_type="llama-server",
+        tags="standard",
+        total_time=10.0,
+        gen_tok_s=100.0,
+        ttft=0.5,
+        samples_during=samples_during,
+    )
+    
+    response = test_client.get(f"/api/benchmarks/run/{run_id}/samples")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert "samples" in data
+    
+    samples = data["samples"]
+    assert len(samples) == 2
+    
+    # Verify tok/s data is present
+    assert "llama_gen_rate" in samples[0]
+    assert "llama_prompt_rate" in samples[0]
+    assert "ollama_gen_rate" in samples[0]
+
+
+@pytest.mark.asyncio
+async def test_sample_during_run_captures_telemetry_and_tok_s(test_db_path):
+    """Test that _sample_during_run samples telemetry at 1 Hz and captures tok/s rates.
+    
+    This exercises the sampling cadence (1 Hz), cancellation, and error tolerance.
+    The test verifies:
+    - samples are captured at ~1 second intervals
+    - memory and GPU data are captured
+    - tok/s rates (llama_gen_rate, llama_prompt_rate, ollama_gen_rate) are captured when available
+    - cancellation stops sampling
+    - telemetry errors don't crash the sampling task
+    """
+    import asyncio
+    import monitor.store
+    from monitor.benchmarks import BenchmarkRunner
+    from monitor.telemetry.fixtures import (
+        FixtureMemorySource, FixtureGPUSource, FixtureTelemetrySource,
+        FixtureLLaMAStatsSource, FixtureOllamaStatsSource
+    )
+    
+    monitor.store.DB_PATH = test_db_path
+    
+    # Create a runner with fixture telemetry sources that provide tok/s data
+    runner = BenchmarkRunner()
+    
+    # Override telemetry sources with fixture sources that have tok/s rates
+    runner._memory_source = FixtureMemorySource(
+        total=32_000_000_000,
+        free=16_000_000_000,
+        used=16_000_000_000
+    )
+    runner._gpu_source = FixtureGPUSource(
+        util=45.0,
+        temp=70.0,
+        power=150.0
+    )
+    runner._llama_stats_source = FixtureLLaMAStatsSource(
+        prompt_tokens=10000,
+        generated_tokens=5000,
+        speculative_accepts=500,
+        prompt_tokens_rate=10.0,
+        generated_tokens_rate=100.0,
+        speculative_accepts_rate=0.5
+    )
+    runner._ollama_stats_source = FixtureOllamaStatsSource(
+        prompt_tokens=8000,
+        generated_tokens=4000,
+        prompt_tokens_rate=8.0,
+        generated_tokens_rate=50.0
+    )
+    
+    # Collect samples for 3 seconds
+    samples_during = []
+    sample_task = asyncio.create_task(runner._sample_during_run(samples_during))
+    
+    # Wait for ~3 samples
+    await asyncio.sleep(3.5)
+    
+    # Cancel the sampling task
+    sample_task.cancel()
+    try:
+        await sample_task
+    except asyncio.CancelledError:
+        pass
+    
+    # Verify we got samples
+    assert len(samples_during) >= 2, f"Expected at least 2 samples, got {len(samples_during)}"
+    
+    # Verify first sample structure
+    first_sample = samples_during[0]
+    assert "timestamp" in first_sample
+    assert "memory_used" in first_sample
+    assert "gpu" in first_sample
+    
+    # Verify memory data
+    assert "memory_used" in first_sample["memory_used"]
+    
+    # Verify GPU data
+    gpu = first_sample["gpu"]
+    assert "gpu_util" in gpu
+    assert "gpu_temp" in gpu
+    assert "gpu_power" in gpu
+    
+    # Verify llama tok/s data (should be captured)
+    assert "llama_gen_rate" in first_sample
+    assert "llama_prompt_rate" in first_sample
+    
+    # Verify ollama tok/s data (should be captured)
+    assert "ollama_gen_rate" in first_sample
+    assert "ollama_prompt_rate" in first_sample
+    
+    # Verify values match fixture sources
+    assert first_sample["llama_gen_rate"] == 100.0
+    assert first_sample["llama_prompt_rate"] == 10.0
+    assert first_sample["ollama_gen_rate"] == 50.0
+    assert first_sample["ollama_prompt_rate"] == 8.0
+    
+    # Verify samples are taken at approximately 1 second intervals
+    # (We expect ~3 samples in 3.5 seconds)
+    for i in range(1, len(samples_during)):
+        prev_ts = first_sample["timestamp"] if i == 1 else samples_during[i-1]["timestamp"]
+        # Parse ISO format timestamps
+        from datetime import datetime
+        prev_dt = datetime.fromisoformat(prev_ts.replace('Z', '+00:00'))
+        curr_dt = datetime.fromisoformat(samples_during[i]["timestamp"].replace('Z', '+00:00'))
+        delta = (curr_dt - prev_dt).total_seconds()
+        assert 0.8 <= delta <= 1.5, f"Sample interval should be ~1s, got {delta}s"
+
+
+@pytest.mark.asyncio
+async def test_sample_during_run_error_tolerance(test_db_path):
+    """Test that _sample_during_run continues sampling despite telemetry errors."""
+    import asyncio
+    import monitor.store
+    from monitor.benchmarks import BenchmarkRunner
+    from monitor.telemetry.fixtures import FixtureMemorySource, FixtureGPUSource, FixtureOllamaStatsSource
+    
+    monitor.store.DB_PATH = test_db_path
+    
+    # Create a runner with fixture sources
+    runner = BenchmarkRunner()
+    
+    # Use fixture sources that work
+    runner._memory_source = FixtureMemorySource(
+        total=32_000_000_000,
+        free=16_000_000_000,
+        used=16_000_000_000
+    )
+    runner._gpu_source = FixtureGPUSource(
+        util=45.0,
+        temp=70.0,
+        power=150.0
+    )
+    
+    # Mock tok/s sources to raise an error on first call, then succeed
+    call_count = 0
+    
+    class ErrorThenSuccessLLaMAStats:
+        async def collect(self):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise Exception("Simulated telemetry error")
+            return {
+                "prompt_tokens": 10000,
+                "generated_tokens": 5000,
+                "prompt_tokens_rate": 10.0,
+                "generated_tokens_rate": 100.0,
+            }
+    
+    runner._llama_stats_source = ErrorThenSuccessLLaMAStats()
+    runner._ollama_stats_source = FixtureOllamaStatsSource(
+        prompt_tokens=8000,
+        generated_tokens=4000,
+        prompt_tokens_rate=8.0,
+        generated_tokens_rate=50.0
+    )
+    
+    # Collect samples for 2 seconds
+    samples_during = []
+    sample_task = asyncio.create_task(runner._sample_during_run(samples_during))
+    
+    await asyncio.sleep(2.5)
+    
+    sample_task.cancel()
+    try:
+        await sample_task
+    except asyncio.CancelledError:
+        pass
+    
+    # Verify we still got samples despite the error
+    assert len(samples_during) >= 1, f"Expected at least 1 sample, got {len(samples_during)}"
+    
+    # Verify first sample has the tok/s rate from the working source
+    # (ollama is still working, llama errors are handled gracefully)
+    assert "ollama_gen_rate" in samples_during[0]

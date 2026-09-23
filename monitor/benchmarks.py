@@ -12,7 +12,7 @@ from .store import (
     get_loaded_model, insert_model, get_settings
 )
 from .probes import ServerDetectorImpl, ModelDetectorImpl, run_probes
-from .telemetry.real import RealMemorySource, RealGPUSource, RealGPUMemorySource
+from .telemetry.real import RealMemorySource, RealGPUSource, RealGPUMemorySource, RealLLaMAStatsSource, RealOllamaStatsSource
 from .telemetry.interface import TelemetrySource
 from .workloads import (
     LongContextWorkloadRunner, BurstWorkloadRunner, 
@@ -102,6 +102,10 @@ class BenchmarkRunner:
         self._memory_source = RealMemorySource()
         self._gpu_source = RealGPUSource()
         self._gpu_memory_source = RealGPUMemorySource()
+        
+        # Telemetry sources for tok/s during run
+        self._llama_stats_source = RealLLaMAStatsSource()
+        self._ollama_stats_source = RealOllamaStatsSource()
         
         # Initialize with current settings if not provided
         # This is called during app creation (sync context), so we need to handle both cases
@@ -845,6 +849,29 @@ class BenchmarkRunner:
                     "memory_used": await self._memory_source.collect(),
                     "gpu": await self._gpu_source.collect(),
                 }
+                
+                # Collect llama-server tok/s if available
+                try:
+                    llama_stats = await self._llama_stats_source.collect()
+                    # Extract rates for the sample
+                    if llama_stats and llama_stats.get("generated_tokens_rate"):
+                        sample["llama_gen_rate"] = llama_stats["generated_tokens_rate"]
+                    if llama_stats and llama_stats.get("prompt_tokens_rate"):
+                        sample["llama_prompt_rate"] = llama_stats["prompt_tokens_rate"]
+                except Exception:
+                    pass  # Silently skip if llama-stats unavailable
+                
+                # Collect ollama tok/s if available
+                try:
+                    ollama_stats = await self._ollama_stats_source.collect()
+                    # Extract rates for the sample
+                    if ollama_stats and ollama_stats.get("ollama_generated_tokens_rate"):
+                        sample["ollama_gen_rate"] = ollama_stats["ollama_generated_tokens_rate"]
+                    if ollama_stats and ollama_stats.get("ollama_prompt_tokens_rate"):
+                        sample["ollama_prompt_rate"] = ollama_stats["ollama_prompt_tokens_rate"]
+                except Exception:
+                    pass  # Silently skip if ollama-stats unavailable
+                
                 samples_list.append(sample)
                 # Wait approximately 1 second between samples
                 await asyncio.sleep(1.0)

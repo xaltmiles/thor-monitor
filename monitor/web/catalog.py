@@ -169,6 +169,7 @@ async def get_timeline_data() -> Dict[str, Any]:
             "details": details,
             "memory_footprint": memory_footprint,
             "standard_run": run.get("standard_run", False),
+            "run_id": run.get("id"),
         })
     
     for session in sessions:

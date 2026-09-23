@@ -240,6 +240,23 @@
                     </div>
                 </div>
             </div>
+            
+            <div class="chart-card">
+                <h3>Token Generation Rate</h3>
+                <div class="chart-wrapper">
+                    <canvas id="tok-s-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #00ff88;"></div>
+                        <span>Tok/s (gen)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #00d4ff;"></div>
+                        <span>Prompt tokens/s</span>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <div class="chart-footer">
@@ -425,6 +442,40 @@
             const gpuPowerCtx = document.getElementById('gpu-power-chart').getContext('2d');
             charts.gpuPower = createLineChart(gpuPowerCtx, [
                 { label: 'Power', data: gpuPower, borderColor: COLORS.gpuPower, hoverBorderColor: COLORS.gpuPowerHover, fill: false }
+            ], timestamps);
+            
+            // Tok/s chart (aggregate from all servers that provided data)
+            const tokSData = data.map(row => {
+                let genRate = null;
+                
+                // Prefer llama gen rate if available
+                if (row.llama_gen_rate !== undefined && row.llama_gen_rate !== null) {
+                    genRate = row.llama_gen_rate;
+                }
+                // Fallback to ollama gen rate
+                else if (row.ollama_gen_rate !== undefined && row.ollama_gen_rate !== null) {
+                    genRate = row.ollama_gen_rate;
+                }
+                
+                // Prompt rate - prefer llama if available
+                let promptRate = null;
+                if (row.llama_prompt_rate !== undefined && row.llama_prompt_rate !== null) {
+                    promptRate = row.llama_prompt_rate;
+                }
+                else if (row.ollama_prompt_rate !== undefined && row.ollama_prompt_rate !== null) {
+                    promptRate = row.ollama_prompt_rate;
+                }
+                
+                return { genRate, promptRate };
+            });
+            
+            const tokSGen = tokSData.map(d => d.genRate);
+            const tokSPrompt = tokSData.map(d => d.promptRate);
+            
+            const tokSCtx = document.getElementById('tok-s-chart').getContext('2d');
+            charts.tokS = createLineChart(tokSCtx, [
+                { label: 'Tok/s (gen)', data: tokSGen, borderColor: '#00ff88', hoverBorderColor: '#33ffaa', fill: false },
+                { label: 'Prompt tokens/s', data: tokSPrompt, borderColor: '#00d4ff', hoverBorderColor: '#33e0ff', fill: false }
             ], timestamps);
         }
         

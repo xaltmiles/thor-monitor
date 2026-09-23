@@ -174,6 +174,29 @@ class RealLLaMAStatsSource(LLaMAStatsSource):
     The llama-server is located via the probe process scan (its port is a
     launch flag, unknowable from config), with a short cache to avoid
     re-scanning the process table on every 1 Hz tick.
+    
+    ## Throughput measurement methodology
+    
+    This source measures **aggregate server throughput** across all parallel slots.
+    When llama-server is started with `--parallel N`, all slots share the GPU,
+    and the counter `llamacpp:tokens_predicted_total` accumulates tokens from
+    ALL slots. The rate computed as `delta / elapsed` is therefore:
+    
+        aggregate_tok_s = sum(all_slot_throughputs)
+    
+    For comparison:
+    - Unsloth Studio typically shows **per-slot or per-request** tok/s
+    - This dashboard shows **aggregate server-wide** tok/s
+    
+    Example: With `--parallel 4` and each slot achieving ~20 tok/s:
+    - Dashboard (aggregate): ~80 tok/s
+    - Studio (per-slot): ~20 tok/s
+    
+    Both are "correct" for their respective questions:
+    - "How fast is my model per request?" → per-slot (Studio)
+    - "How much total throughput is the server producing?" → aggregate (Dashboard)
+    
+    See also: README section "Understanding tok/s: aggregate vs per-request throughput"
     """
     
     DETECT_CACHE_SECONDS = 10.0

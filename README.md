@@ -262,6 +262,43 @@ Use the timeline to spot patterns (e.g., thermal throttling over time).
 
 ---
 
+## Understanding tok/s: aggregate vs per-request throughput
+
+The dashboard and Unsloth Studio may display different tok/s values. This is expected and reflects different measurement methodologies:
+
+### Dashboard (aggregate throughput)
+
+The monitor measures throughput by polling `llamacpp:tokens_predicted_total` (a Prometheus counter) from llama-server's `/metrics` endpoint. The rate is computed as:
+
+```python
+delta = current_counter - previous_counter
+rate = delta / elapsed_time
+```
+
+This counter accumulates tokens from **all parallel slots**. With `--parallel 4`:
+- If each slot processes ~20 tok/s
+- The counter accumulates ~80 tok/s total
+- Dashboard reports ~80 tok/s (aggregate)
+
+### Unsloth Studio (per-slot throughput)
+
+Unsloth Studio typically displays `llamacpp:predicted_tokens_seconds` (a Prometheus gauge) which represents the **average per-slot** tok/s. This shows how fast each individual request is being processed.
+
+### Why they differ
+
+| Question | Metric | Typical Value |
+|----------|--------|---------------|
+| "How fast is my model per request?" | per-slot tok/s (Studio) | ~20 tok/s |
+| "How much total throughput is the server producing?" | aggregate tok/s (Dashboard) | ~80 tok/s (with --parallel 4) |
+
+### Which to trust?
+
+- **Both are correct** for their intended purpose
+- Use **per-slot tok/s** to understand model latency/response time
+- Use **aggregate tok/s** to understand server capacity/utilization
+
+---
+
 ## Troubleshooting
 
 ### No telemetry samples

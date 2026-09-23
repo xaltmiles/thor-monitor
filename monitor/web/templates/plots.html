@@ -287,6 +287,13 @@
         let lastZoomRange = null;
         // Flag to track if double-click listener has been added (module-level, not in charts object)
         let dblclickListenerAdded = false;
+        // Guards synchronizedZoom while a reset is in flight. chart.resetZoom()
+        // fires the plugin's onZoomComplete synchronously with the chart's
+        // full data bounds; recording those would resurrect the zoom window on
+        // the next refresh (lastZoomRange re-pinned to data edges) and freeze
+        // the dashboard at the reset-time window, so new telemetry would never
+        // scroll in until a full page reload.
+        let isResetting = false;
         
         const canvasMarkup = `
             <div class="chart-card">
@@ -408,6 +415,14 @@
         
         // Synchronized zoom across all charts
         function synchronizedZoom(sourceChart) {
+            // Never record ranges during a reset: the plugin's synchronous
+            // onZoomComplete inside chart.resetZoom() reports full-data bounds,
+            // and saving them would pin the next refresh to the reset-time
+            // window instead of letting charts track new data.
+            if (isResetting) {
+                return;
+            }
+
             // Don't sync if this chart didn't trigger the zoom
             if (lastZoomSource === sourceChart) {
                 lastZoomSource = null;
@@ -435,20 +450,27 @@
         
         // Reset zoom on all charts
         function resetZoom() {
-            // Clear shared time range first to prevent synchronizedZoom from updating it
-            // during the reset process
-            const oldSharedTimeRange = sharedTimeRange;
-            sharedTimeRange = { min: null, max: null };
-            lastZoomRange = null;
-            
-            for (const name in charts) {
-                if (charts[name]) {
-                    charts[name].resetZoom();
+            isResetting = true;
+            try {
+                // Clear the zoom state so charts render their natural full view
+                // and the next refresh does not reapply a saved window.
+                sharedTimeRange = { min: null, max: null };
+                lastZoomRange = null;
+
+                for (const name in charts) {
+                    if (charts[name]) {
+                        charts[name].resetZoom();
+                    }
                 }
+
+                // Each chart.resetZoom() fired onZoomComplete synchronously, but
+                // the isResetting guard kept synchronizedZoom from recording the
+                // full-data bounds it reports. Re-assert the cleared state so no
+                // path can resurrect the old window on the next refresh.
+                sharedTimeRange = { min: null, max: null };
+            } finally {
+                isResetting = false;
             }
-            
-            // Don't let synchronizedZoom resurrect the old range during reset
-            // The reset is complete, so we keep sharedTimeRange at null
         }
         
         // Apply saved zoom range to a chart
@@ -502,7 +524,12 @@
                                 }
                             }
                         },
-                        // Zoom and pan plugin configuration
+                        // Zoom and pan plugin configuration.
+                        // Note the plugin v2 reads `mode` from `zoom` (the zoom
+                        // action) and `pan` directly; per-gesture `mode` keys
+                        // (wheel.mode etc.) are ignored, and the default mode is
+                        // 'xy' — so `mode: 'x'` here is what confines zooming to
+                        // the shared time axis.
                         zoom: {
                             pan: {
                                 enabled: true,
@@ -515,17 +542,15 @@
                             zoom: {
                                 wheel: {
                                     enabled: true,
-                                    mode: 'x',
                                 },
                                 pinch: {
                                     enabled: true,
-                                    mode: 'x',
                                 },
                                 drag: {
                                     enabled: true,
-                                    mode: 'x',
                                     modifierKey: null,  // Drag without modifier triggers zoom
                                 },
+                                mode: 'x',
                                 onZoomComplete: function({ chart }) {
                                     synchronizedZoom(chart);
                                 },

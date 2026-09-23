@@ -1,4 +1,27 @@
-"""Tests for plots page zoom/pan/reset with synchronized time axis (issue #30)."""
+"""Behavioral tests for the plots page zoom/pan/reset (issue #30).
+
+These tests execute the template's real inline script under the same library
+versions the template pins on the CDN (Chart.js 4.5.1, chartjs-plugin-zoom
+2.0.1, hammerjs 2.0.8, luxon 3.7.2), inside jsdom, and drive it with real DOM
+events: wheel zoom, shift+drag pan, drag zoom, reset button/dblclick, and
+simulated 30s refreshes with advancing telemetry.
+
+Substring greps over the served HTML cannot catch what previous review rounds
+found here (a reset that silently froze live tracking; wheel zoom moving the
+value axis), because the bugs live in the executed script, not the markup.
+The harness in tests/js/run_plots_tests.mjs runs the actual code path; each
+scenario below is one scenario of that harness and fails if the page's real
+JavaScript misbehaves under the real Chart.js.
+
+Setup: node must be on PATH and `npm install` run at the repo root
+(package.json pins the exact library versions). Without them these tests
+skip; with them they are mandatory pass/fail.
+"""
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,7 +29,31 @@ from fastapi.testclient import TestClient
 from monitor.web.routes import app
 import monitor.store
 import tempfile
-from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HARNESS = REPO_ROOT / "tests" / "js" / "run_plots_tests.mjs"
+
+# One pytest test per harness scenario: each scenario boots a fresh jsdom page
+# and drives one acceptance criterion (or regression) end to end.
+SCENARIOS = [
+    # Sanity: the inline script builds six real Chart instances on a time axis
+    "charts_build",
+    # AC1+AC2: wheel zoom narrows one chart and all six follow; y axis fixed
+    "wheel_zoom_syncs_all",
+    # AC1+AC2: shift+drag pan propagates the window to every chart
+    "shift_drag_pan_syncs_all",
+    # AC1+AC2: plain-drag zoom syncs all charts to the selected window
+    "drag_zoom_syncs_all",
+    # AC3: Reset Zoom button and double-click reset all charts and clear state
+    "reset_button_and_dblclick",
+    # AC4: zoom survives incremental refresh and is clamped on range switch
+    "zoom_survives_refresh_and_range_switch",
+    # Regression: after a reset the charts keep tracking new telemetry
+    # (reset used to resurrect the zoom window and freeze the dashboard)
+    "reset_does_not_freeze_tracking",
+    # AC5: tooltips stay usable while zoomed (real mousemove activates them)
+    "tooltip_works_while_zoomed",
+]
 
 
 @pytest.fixture
@@ -15,11 +62,11 @@ def test_db_path():
     temp_dir = Path(tempfile.mkdtemp())
     temp_db = temp_dir / "test_monitor.db"
     original_path = monitor.store.DB_PATH
-    
+
     monitor.store.DB_PATH = temp_db
-    
+
     yield temp_db
-    
+
     import shutil
     shutil.rmtree(temp_dir)
     monitor.store.DB_PATH = original_path
@@ -30,110 +77,64 @@ def test_client(test_db_path):
     """Create a test client with test database."""
     import asyncio
     from monitor.store import init_db
-    
+
     # Initialize test database
     asyncio.run(init_db())
-    
+
     return TestClient(app)
 
 
-def test_plots_html_includes_chartjs_plugin_zoom(test_client, test_db_path):
-    """Test that plots.html includes chartjs-plugin-zoom from CDN."""
+def _run_scenario(test_client, scenario: str) -> None:
+    """Serve /plots and execute one harness scenario against its real JS."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node executable not on PATH; required for plots behavioral tests")
+    if not (REPO_ROOT / "node_modules" / "jsdom").is_dir():
+        pytest.skip("node_modules missing; run `npm install` at the repo root (see package.json)")
+
     response = test_client.get("/plots")
     assert response.status_code == 200
-    html = response.text
-    
-    # Check that chartjs-plugin-zoom is included
-    assert 'cdn.jsdelivr.net/npm/chartjs-plugin-zoom' in html or 'chartjs-plugin-zoom' in html
+
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
+        f.write(response.text)
+        html_path = f.name
+
+    try:
+        proc = subprocess.run(
+            [node, str(HARNESS), html_path, scenario],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+    finally:
+        Path(html_path).unlink(missing_ok=True)
+
+    detail = (proc.stdout or "") + (proc.stderr or "")
+    assert proc.returncode == 0, f"harness scenario '{scenario}' failed:\n{detail}"
 
 
-def test_plots_html_includes_hammerjs(test_client, test_db_path):
-    """Test that plots.html includes hammer.js for touch gestures."""
-    response = test_client.get("/plots")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check that hammer.js is included
-    assert 'cdn.jsdelivr.net/npm/hammerjs' in html or 'hammerjs' in html
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_plots_page_behavior(test_client, test_db_path, scenario):
+    """Run one behavioral scenario of the plots-page JS harness."""
+    _run_scenario(test_client, scenario)
 
 
-def test_plots_html_has_reset_zoom_button(test_client, test_db_path):
-    """Test that plots.html has a visible reset zoom affordance."""
-    response = test_client.get("/plots")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check for reset zoom button
-    assert 'reset' in html.lower() or 'Reset' in html
+def test_plots_cdn_versions_match_test_dependencies(test_client, test_db_path):
+    """The jsdom harness tests the versions the template actually pins.
 
+    If the template's CDN pins drift from package.json, the behavioral tests
+    would silently exercise the wrong library versions.
+    """
+    html = test_client.get("/plots").text
+    pkg = json.loads((REPO_ROOT / "package.json").read_text())
 
-def test_plots_html_has_synchronized_time_axis_js(test_client, test_db_path):
-    """Test that plots.html has JavaScript for synchronized time axis."""
-    response = test_client.get("/plots")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check for sync-related JavaScript
-    assert 'sync' in html.lower() or 'synchronize' in html.lower() or 'synchronized' in html.lower()
-
-
-def test_plots_html_preserves_zoom_on_refresh(test_client, test_db_path):
-    """Test that plots.html has JavaScript to preserve zoom state across refreshes."""
-    response = test_client.get("/plots")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check for zoom state preservation logic
-    assert 'zoom' in html.lower()
-    assert ('lastTimestamp' in html or 'zoomState' in html or 'zoomWindow' in html or 
-            'range' in html.lower())
-
-
-def test_plots_html_has_double_click_reset(test_client, test_db_path):
-    """Test that plots.html has double-click reset functionality."""
-    response = test_client.get("/plots")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check for double-click handler
-    assert 'dblclick' in html.lower() or 'dbl-click' in html.lower() or 'double.*click' in html.lower()
-
-
-def test_plots_html_range_buttons_update_synced_charts(test_client, test_db_path):
-    """Test that range buttons properly update all synchronized charts."""
-    response = test_client.get("/plots")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check that range buttons are present and properly configured
-    assert 'data-limit="60"' in html  # 1m
-    assert 'data-limit="900"' in html  # 15m
-    assert 'data-limit="3600"' in html  # 1h (default)
-    assert 'data-limit="21600"' in html  # 6h
-    assert 'data-limit="86400"' in html  # 24h
-
-
-def test_plots_html_tooltips_work_while_zoomed(test_client, test_db_path):
-    """Test that plots.html has tooltip configuration for zoomed state."""
-    response = test_client.get("/plots")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check for tooltip configuration in chart options
-    assert 'tooltip' in html.lower()
-    assert 'mode' in html.lower()
-
-
-def test_plots_html_synchronized_axes_implementation(test_client, test_db_path):
-    """Test that plots.html has synchronized axes implementation."""
-    response = test_client.get("/plots")
-    assert response.status_code == 200
-    html = response.text
-    
-    # Check for chart synchronization logic
-    # Should have chart references and axis synchronization
-    assert 'charts' in html.lower() or 'chart' in html.lower()
-    
-    # Should have shared axis min/max logic
-    assert ('min' in html and 'max' in html and 'time' in html.lower()) or \
-           ('synchronize' in html.lower() and 'axis' in html.lower())
+    for name, version in pkg["devDependencies"].items():
+        if name == "canvas" or name == "jsdom":
+            continue  # test-infrastructure deps, not loaded by the template
+        expected = f"cdn.jsdelivr.net/npm/{name}@{version}"
+        assert expected in html, (
+            f"template does not pin {name}@{version} from the CDN; "
+            f"the behavioral harness (package.json) would test a different version"
+        )

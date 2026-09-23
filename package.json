@@ -1,0 +1,15 @@
+{
+  "name": "monitor",
+  "private": true,
+  "description": "Node deps for the plots-page behavioral tests (tests/test_plots_zoom.py executes the template's real inline script under the same Chart.js/chartjs-plugin-zoom/hammer/luxon versions the template pins on the CDN).",
+  "devDependencies": {
+    "canvas": "3.2.0",
+    "chart.js": "4.5.1",
+    "chartjs-adapter-luxon": "1.3.1",
+    "chartjs-plugin-zoom": "2.0.1",
+    "hammerjs": "2.0.8",
+    "htmx.org": "1.9.10",
+    "jsdom": "26.1.0",
+    "luxon": "3.7.2"
+  }
+}

@@ -12,3 +12,6 @@ wheels/
 # agents
 .agents
 .pi/subagent-schedules
+
+# Node deps for the plots behavioral tests
+node_modules/

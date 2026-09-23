@@ -393,6 +393,9 @@
         }
         
         function destroyCharts() {
+            // Delete the dblclick listener flag before iterating (it's a boolean, not a chart)
+            delete charts.dblclickListenerAdded;
+            
             Object.values(charts).forEach(chart => {
                 if (chart) {
                     chart.destroy();
@@ -662,8 +665,10 @@
             // Apply saved zoom range if available (preserved across refreshes)
             if (lastZoomRange && lastZoomRange.min !== null && lastZoomRange.max !== null) {
                 // Clamp saved zoom range to current data bounds to prevent empty window
-                const dataMin = timestamps[0];
-                const dataMax = timestamps[timestamps.length - 1];
+                // timestamps are ISO strings from the API, but lastZoomRange contains epoch ms
+                // Parse the ISO strings to epoch ms for comparison
+                const dataMin = Date.parse(timestamps[0]);
+                const dataMax = Date.parse(timestamps[timestamps.length - 1]);
                 const clampedMin = Math.max(lastZoomRange.min, dataMin);
                 const clampedMax = Math.min(lastZoomRange.max, dataMax);
                 

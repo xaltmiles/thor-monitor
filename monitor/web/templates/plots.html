@@ -195,7 +195,11 @@
                 <div class="chart-legend">
                     <div class="legend-item">
                         <div class="legend-color" style="background: #00ff88;"></div>
-                        <span>llama.cpp tok/s</span>
+                        <span>generated tok/s</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #66ffb3;"></div>
+                        <span>prompt tok/s</span>
                     </div>
                 </div>
             </div>
@@ -208,7 +212,11 @@
                 <div class="chart-legend">
                     <div class="legend-item">
                         <div class="legend-color" style="background: #00d4ff;"></div>
-                        <span>Ollama tok/s</span>
+                        <span>generated tok/s</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #4da6ff;"></div>
+                        <span>prompt tok/s</span>
                     </div>
                 </div>
             </div>
@@ -255,8 +263,12 @@
         const COLORS = {
             ollama: '#00d4ff',
             ollamaHover: '#33e0ff',
+            ollamaPrompt: '#4da6ff',
+            ollamaPromptHover: '#66b3ff',
             llama: '#00ff88',
             llamaHover: '#33ffaa',
+            llamaPrompt: '#66ffb3',
+            llamaPromptHover: '#80ffc2',
             gpuTemp: '#ff6b6b',
             gpuTempHover: '#ff8888',
             gpuUtil: '#ffd93d',
@@ -426,18 +438,22 @@
                 { label: 'Temperature', data: gpuTemp, borderColor: COLORS.gpuTemp, hoverBorderColor: COLORS.gpuTempHover, fill: false }
             ], timestamps);
             
-            // llama.cpp tok/s chart
-            const llamaTokS = data.map(row => parseStats(row.llama_stats, 'generated_tokens_rate'));
+            // llama.cpp tok/s chart (two series: generated and prompt)
+            const llamaGeneratedTokS = data.map(row => parseStats(row.llama_stats, 'generated_tokens_rate'));
+            const llamaPromptTokS = data.map(row => parseStats(row.llama_stats, 'prompt_tokens_rate'));
             const llamaTokSCtx = document.getElementById('llama-tok-s-chart').getContext('2d');
             charts.llamaTokS = createLineChart(llamaTokSCtx, [
-                { label: 'llama.cpp tok/s', data: llamaTokS, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false }
+                { label: 'generated tok/s', data: llamaGeneratedTokS, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false },
+                { label: 'prompt tok/s', data: llamaPromptTokS, borderColor: COLORS.llamaPrompt, hoverBorderColor: COLORS.llamaPromptHover, fill: false }
             ], timestamps);
             
-            // Ollama tok/s chart
-            const ollamaTokS = data.map(row => parseStats(row.ollama_stats, 'ollama_generated_tokens_rate'));
+            // Ollama tok/s chart (two series: generated and prompt)
+            const ollamaGeneratedTokS = data.map(row => parseStats(row.ollama_stats, 'ollama_generated_tokens_rate'));
+            const ollamaPromptTokS = data.map(row => parseStats(row.ollama_stats, 'ollama_prompt_tokens_rate'));
             const ollamaTokSCtx = document.getElementById('ollama-tok-s-chart').getContext('2d');
             charts.ollamaTokS = createLineChart(ollamaTokSCtx, [
-                { label: 'Ollama tok/s', data: ollamaTokS, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false }
+                { label: 'generated tok/s', data: ollamaGeneratedTokS, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false },
+                { label: 'prompt tok/s', data: ollamaPromptTokS, borderColor: COLORS.ollamaPrompt, hoverBorderColor: COLORS.ollamaPromptHover, fill: false }
             ], timestamps);
             
             // GPU Util chart (1 dataset)

@@ -179,10 +179,15 @@ async def get_timeline_data() -> Dict[str, Any]:
         avg_tok_s = session.get("avg_tok_s")
         total_tokens = session.get("total_tokens")
         
-        # Get model name from pre-fetched models dict (N+1 fix)
+        # Get model name and server_type from pre-fetched models dict (N+1 fix)
         model_name = "unknown"
+        server_type = None
         if model_id in models_by_id:
             model_name = models_by_id[model_id].get("name", "unknown")
+            server_type = models_by_id[model_id].get("server_type")
+        
+        # Build details string with server type indicator
+        server_indicator = f"{server_type} | " if server_type else ""
         
         details_parts = []
         if avg_tok_s:
@@ -191,10 +196,12 @@ async def get_timeline_data() -> Dict[str, Any]:
             details_parts.append(f"{total_tokens} tokens")
         
         details = ", ".join(details_parts) if details_parts else "session"
+        details = f"{server_indicator}{details}"
         
         timeline_events.append({
             "type": event_type,
             "model_name": model_name,
+            "server_type": server_type,
             "timestamp": start_time,
             "end_time": end_time,
             "details": details,

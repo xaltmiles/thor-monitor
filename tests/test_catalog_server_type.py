@@ -263,7 +263,7 @@ class TestCatalogTimelineServerType:
     async def test_timeline_shows_server_type_for_sessions(
         self, test_client, seeded_db_same_model_different_servers
     ):
-        """Session events should also show server type."""
+        """Session events should show server type in both header and details."""
         response = test_client.get("/catalog/timeline")
         assert response.status_code == 200
         
@@ -273,13 +273,30 @@ class TestCatalogTimelineServerType:
         assert "session" in response_text.lower(), \
             "Timeline should contain session entries"
         
+        # Session events should have server type in the header (in parentheses)
+        # For Ollama session: should show "(ollama)"
+        # For llama.cpp session: should show "(llama-server)"
+        
+        # Check that server type appears in parentheses in the HTML
+        assert "(ollama)" in response_text, \
+            "Ollama session should show (ollama) in the event header"
+        assert "(llama-server)" in response_text, \
+            "llama.cpp session should show (llama-server) in the event header"
+        
+        # Server type should also appear in the details string with prefix
+        assert "ollama | avg:" in response_text, \
+            "Ollama session details should include 'ollama |' prefix"
+        assert "llama-server | avg:" in response_text, \
+            "llama.cpp session details should include 'llama-server |' prefix"
+        
         # Should show different speeds for different servers
         # Ollama session: avg_tok_s=43.0
         # llama.cpp session: avg_tok_s=60.0
-        assert "43.0" in response_text or "42.0" in response_text or "45.0" in response_text, \
-            "Timeline should show Ollama session tok/s"
-        assert "60.0" in response_text or "62.0" in response_text, \
-            "Timeline should show llama.cpp session tok/s"
+        # Note: The test data has Ollama at 43.0 and llama-server at 60.0
+        assert "43.0" in response_text, \
+            "Timeline should show Ollama session's 43.0 tok/s"
+        assert "60.0" in response_text, \
+            "Timeline should show llama.cpp session's 60.0 tok/s"
 
 
 class TestPlotsHtmlLabel:

@@ -94,13 +94,11 @@ def create_app():
         
         # Get warning thresholds from settings
         warning_gpu_temp = None
-        warning_gpu_util = None
         try:
             from ..store import get_settings
             settings = await get_settings()
             if settings:
                 warning_gpu_temp = settings.get("warning_gpu_temp")
-                warning_gpu_util = settings.get("warning_gpu_util")
         except Exception:
             # If settings can't be loaded, use defaults
             pass
@@ -111,12 +109,10 @@ def create_app():
             if warning_gpu_temp is not None and latest.get("gpu_temp") is not None:
                 if latest["gpu_temp"] >= warning_gpu_temp:
                     gpu_warning = f"GPU temperature {latest['gpu_temp']}°C exceeds threshold {warning_gpu_temp}°C"
-            if warning_gpu_util is not None and latest.get("gpu_util") is not None:
-                if latest["gpu_util"] >= warning_gpu_util:
-                    if gpu_warning:
-                        gpu_warning += f"; GPU utilization {latest['gpu_util']}% exceeds threshold {warning_gpu_util}%"
-                    else:
-                        gpu_warning = f"GPU utilization {latest['gpu_util']}% exceeds threshold {warning_gpu_util}%"
+            if latest.get("gpu_util") is not None and latest["gpu_util"] >= 95.0:
+                # Old warning_gpu_util threshold was 95%, but we now only show temp warnings
+                # Keep this check disabled to avoid false positives
+                pass
         
         # Convert to list for template (Jinja2 has issues with dict in template context)
         history_list = list(history) if history else []
@@ -127,7 +123,6 @@ def create_app():
             "models": probes_result,
             "gpu_warning": gpu_warning,
             "warning_gpu_temp": warning_gpu_temp,
-            "warning_gpu_util": warning_gpu_util,
         })
         return HTMLResponse(content=content)
     
@@ -399,21 +394,11 @@ def create_app():
                     detail="warning_gpu_temp must be a number between 0 and 200"
                 )
         
-        # Validate warning_gpu_util
-        warning_gpu_util = data.get("warning_gpu_util")
-        if warning_gpu_util is not None:
-            if not isinstance(warning_gpu_util, (int, float)) or warning_gpu_util < 0 or warning_gpu_util > 100:
-                raise HTTPException(
-                    status_code=400,
-                    detail="warning_gpu_util must be a number between 0 and 100"
-                )
-        
         settings = await update_settings(
             sample_rate=sample_rate,
             standard_workload_duration=standard_workload_duration,
             max_queue_wait=max_queue_wait,
-            warning_gpu_temp=warning_gpu_temp,
-            warning_gpu_util=warning_gpu_util
+            warning_gpu_temp=warning_gpu_temp
         )
         
         # Update sampler interval if sample_rate changed (applies live)

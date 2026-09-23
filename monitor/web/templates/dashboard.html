@@ -561,26 +561,16 @@
                 const warningBanner = document.getElementById('warning-banner');
                 const warningText = document.getElementById('warning-text');
                 const tempThreshold = {{ warning_gpu_temp or 85.0 }};
-                const utilThreshold = {{ warning_gpu_util or 95.0 }};
                 
-                if (data && (data.gpu_temp !== null && data.gpu_temp !== undefined || data.gpu_util !== null && data.gpu_util !== undefined)) {
-                    let exceeds = [];
-                    
-                    if (data.gpu_temp !== null && data.gpu_temp >= tempThreshold) {
-                        exceeds.push(`GPU temperature ${data.gpu_temp}°C >= threshold ${tempThreshold}°C`);
-                    }
-                    if (data.gpu_util !== null && data.gpu_util >= utilThreshold) {
-                        exceeds.push(`GPU utilization ${data.gpu_util}% >= threshold ${utilThreshold}%`);
-                    }
-                    
-                    if (exceeds.length > 0) {
-                        warningText.textContent = exceeds.join('; ');
+                if (data && data.gpu_temp !== null && data.gpu_temp !== undefined) {
+                    if (data.gpu_temp >= tempThreshold) {
+                        warningText.textContent = `GPU temperature ${data.gpu_temp}°C >= threshold ${tempThreshold}°C`;
                         warningBanner.style.display = 'block';
                     } else {
                         warningBanner.style.display = 'none';
                     }
                 } else {
-                    // No telemetry data, hide warning
+                    // No telemetry data or no temp warning, hide warning
                     warningBanner.style.display = 'none';
                 }
                 // Format GPU metrics

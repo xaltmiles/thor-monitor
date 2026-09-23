@@ -16,7 +16,6 @@ DEFAULTS = {
     "standard_workload_duration": 10,
     "max_queue_wait": 120,
     "warning_gpu_temp": 85.0,
-    "warning_gpu_util": 95.0,
 }
 
 
@@ -148,15 +147,14 @@ async def init_db():
                 sample_rate INTEGER DEFAULT 1,
                 standard_workload_duration INTEGER DEFAULT 10,
                 max_queue_wait INTEGER DEFAULT 120,
-                warning_gpu_temp REAL DEFAULT 85.0,
-                warning_gpu_util REAL DEFAULT 95.0
+                warning_gpu_temp REAL DEFAULT 85.0
             )
         """)
         
         # Insert default settings row if not exists
         await db.execute(
-            "INSERT OR IGNORE INTO settings (id, sample_rate, standard_workload_duration, max_queue_wait, warning_gpu_temp, warning_gpu_util) VALUES (1, ?, ?, ?, ?, ?)",
-            (DEFAULTS["sample_rate"], DEFAULTS["standard_workload_duration"], DEFAULTS["max_queue_wait"], DEFAULTS["warning_gpu_temp"], DEFAULTS["warning_gpu_util"])
+            "INSERT OR IGNORE INTO settings (id, sample_rate, standard_workload_duration, max_queue_wait, warning_gpu_temp) VALUES (1, ?, ?, ?, ?)",
+            (DEFAULTS["sample_rate"], DEFAULTS["standard_workload_duration"], DEFAULTS["max_queue_wait"], DEFAULTS["warning_gpu_temp"])
         )
         await db.commit()
         
@@ -682,8 +680,7 @@ async def update_settings(
     sample_rate: int = None,
     standard_workload_duration: int = None,
     max_queue_wait: int = None,
-    warning_gpu_temp: float = None,
-    warning_gpu_util: float = None
+    warning_gpu_temp: float = None
 ) -> Optional[dict]:
     """Update settings. Only provided parameters are updated.
     
@@ -692,8 +689,7 @@ async def update_settings(
         standard_workload_duration: Standard short workload duration in seconds
         max_queue_wait: Maximum time to wait for server to drain in seconds
         warning_gpu_temp: GPU temperature warning threshold in Celsius
-        warning_gpu_util: GPU utilization warning threshold in percent
-        
+    
     Returns:
         Updated settings dict, or None if no settings exist
     """
@@ -713,10 +709,6 @@ async def update_settings(
     if warning_gpu_temp is not None:
         updates.append("warning_gpu_temp = ?")
         values.append(warning_gpu_temp)
-    if warning_gpu_util is not None:
-        updates.append("warning_gpu_util = ?")
-        values.append(warning_gpu_util)
-    
     if not updates:
         # No updates, just fetch current
         return await get_settings()

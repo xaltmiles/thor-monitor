@@ -37,7 +37,7 @@ class TestSettingsStore:
                 assert "standard_workload_duration" in column_names
                 assert "max_queue_wait" in column_names
                 assert "warning_gpu_temp" in column_names
-                assert "warning_gpu_util" in column_names
+                assert "warning_gpu_util" not in column_names
         finally:
             monitor.store.DB_PATH = original_path
     
@@ -57,7 +57,7 @@ class TestSettingsStore:
             assert settings["standard_workload_duration"] == 10
             assert settings["max_queue_wait"] == 120
             assert settings["warning_gpu_temp"] == 85.0
-            assert settings["warning_gpu_util"] == 95.0
+            assert "warning_gpu_util" not in settings
         finally:
             monitor.store.DB_PATH = original_path
     
@@ -76,7 +76,6 @@ class TestSettingsStore:
                 standard_workload_duration=20,
                 max_queue_wait=60,
                 warning_gpu_temp=80.0,
-                warning_gpu_util=90.0
             )
             
             assert updated is not None
@@ -84,7 +83,7 @@ class TestSettingsStore:
             assert updated["standard_workload_duration"] == 20
             assert updated["max_queue_wait"] == 60
             assert updated["warning_gpu_temp"] == 80.0
-            assert updated["warning_gpu_util"] == 90.0
+            assert "warning_gpu_util" not in updated
             
             # Retrieve and verify persistence
             settings = await get_settings()
@@ -93,7 +92,7 @@ class TestSettingsStore:
             assert settings["standard_workload_duration"] == 20
             assert settings["max_queue_wait"] == 60
             assert settings["warning_gpu_temp"] == 80.0
-            assert settings["warning_gpu_util"] == 90.0
+            assert "warning_gpu_util" not in settings
         finally:
             monitor.store.DB_PATH = original_path
     
@@ -175,7 +174,7 @@ class TestSettingsAPI:
                 assert "standard_workload_duration" in data
                 assert "max_queue_wait" in data
                 assert "warning_gpu_temp" in data
-                assert "warning_gpu_util" in data
+                assert "warning_gpu_util" not in data
         finally:
             monitor.store.DB_PATH = original_path
     
@@ -200,8 +199,7 @@ class TestSettingsAPI:
                         "sample_rate": 2,
                         "standard_workload_duration": 20,
                         "max_queue_wait": 60,
-                        "warning_gpu_temp": 80.0,
-                        "warning_gpu_util": 90.0
+                        "warning_gpu_temp": 80.0
                     }
                 )
                 

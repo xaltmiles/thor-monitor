@@ -285,6 +285,8 @@
         let lastZoomSource = null;
         // Store the last zoom range to preserve across refreshes
         let lastZoomRange = null;
+        // Flag to track if double-click listener has been added (module-level, not in charts object)
+        let dblclickListenerAdded = false;
         
         const canvasMarkup = `
             <div class="chart-card">
@@ -393,8 +395,8 @@
         }
         
         function destroyCharts() {
-            // Delete the dblclick listener flag before iterating (it's a boolean, not a chart)
-            delete charts.dblclickListenerAdded;
+            // Clear the flag - it will be re-added when charts are recreated
+            dblclickListenerAdded = false;
             
             Object.values(charts).forEach(chart => {
                 if (chart) {
@@ -433,6 +435,9 @@
         
         // Reset zoom on all charts
         function resetZoom() {
+            // Clear shared time range first to prevent synchronizedZoom from updating it
+            // during the reset process
+            const oldSharedTimeRange = sharedTimeRange;
             sharedTimeRange = { min: null, max: null };
             lastZoomRange = null;
             
@@ -441,6 +446,9 @@
                     charts[name].resetZoom();
                 }
             }
+            
+            // Don't let synchronizedZoom resurrect the old range during reset
+            // The reset is complete, so we keep sharedTimeRange at null
         }
         
         // Apply saved zoom range to a chart
@@ -687,7 +695,7 @@
             }
             
             // Add single double-click listener for reset zoom (only once)
-            if (!charts.dblclickListenerAdded) {
+            if (!dblclickListenerAdded) {
                 const chartsContainer = document.querySelector('.charts-container');
                 if (chartsContainer) {
                     chartsContainer.addEventListener('dblclick', function(e) {
@@ -696,7 +704,7 @@
                             resetZoom();
                         }
                     });
-                    charts.dblclickListenerAdded = true;
+                    dblclickListenerAdded = true;
                 }
             }
         }

@@ -517,6 +517,100 @@ async def test_dashboard_no_cross_contamination_prompt_generate(test_client, tes
     assert "metric === 'prompt'" in html or "metric == 'prompt'" in html
 
 
+def test_dashboard_rendered_javascript_syntax_valid():
+    """Test that the dashboard template renders syntactically valid JavaScript."""
+    import subprocess
+    import re
+    from fastapi.testclient import TestClient
+    from monitor.web.routes import app
+    import monitor.store
+    import tempfile
+    from pathlib import Path
+    
+    # Create a temp database
+    temp_dir = Path(tempfile.mkdtemp())
+    temp_db = temp_dir / "test_monitor.db"
+    original_path = monitor.store.DB_PATH
+    monitor.store.DB_PATH = temp_db
+    
+    try:
+        # Initialize DB
+        import asyncio
+        asyncio.run(monitor.store.init_db())
+        
+        # Add some data to ensure template renders fully
+        from monitor.store import insert_telemetry_sample
+        import json
+        
+        async def setup():
+            await insert_telemetry_sample(
+                memory_total=32_000_000_000,
+                memory_free=16_000_000_000,
+                memory_used=16_000_000_000,
+                gpu_util=45.0,
+                gpu_temp=70.0,
+                gpu_power=150.0,
+                process_memory="[]",
+                llama_stats=json.dumps({
+                    "prompt_tokens": 1000,
+                    "generated_tokens": 500,
+                    "prompt_tokens_rate": 10.5,
+                    "generated_tokens_rate": 5.2,
+                }),
+                ollama_stats=None,
+            )
+        
+        asyncio.run(setup())
+        
+        # Get the rendered HTML
+        client = TestClient(app)
+        response = client.get("/")
+        assert response.status_code == 200
+        html = response.text
+        
+        # Extract the JavaScript content
+        match = re.search(r'<script>([\s\S]*?)</script>', html)
+        assert match is not None, "Expected <script> tag in dashboard HTML"
+        js_content = match.group(1)
+        
+        # Replace Jinja2 template syntax with valid JavaScript
+        def replace_jinja(match):
+            content = match.group(1).strip()
+            # Handle "{{ var or default }}" pattern
+            if " or " in content:
+                parts = content.split(" or ")
+                var_name = parts[0].strip()
+                default = parts[1].strip()
+                return default
+            return "null"
+        
+        js_content = re.sub(r'\{\{([^}]+)\}\}', replace_jinja, js_content)
+        
+        # Write the extracted JavaScript to a temp file
+        import tempfile as tmp
+        with tmp.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
+            f.write(js_content)
+            temp_js_path = f.name
+        
+        try:
+            # Run node --check to verify syntax
+            result = subprocess.run(
+                ['node', '--check', temp_js_path],
+                capture_output=True,
+                text=True
+            )
+            assert result.returncode == 0, f"JavaScript syntax check failed: {result.stderr}"
+        finally:
+            import os
+            os.unlink(temp_js_path)
+    
+    finally:
+        # Clean up
+        import shutil
+        shutil.rmtree(temp_dir)
+        monitor.store.DB_PATH = original_path
+
+
 @pytest.mark.asyncio
 async def test_api_plots_history_returns_only_required_columns(test_client):
     """Test that /api/plots/history returns only columns needed for plots."""

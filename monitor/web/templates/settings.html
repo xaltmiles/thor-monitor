@@ -189,14 +189,12 @@
                     document.getElementById('standard_workload_duration').value = data.standard_workload_duration || 10;
                     document.getElementById('max_queue_wait').value = data.max_queue_wait || 120;
                     document.getElementById('warning_gpu_temp').value = data.warning_gpu_temp || 85.0;
-                    document.getElementById('warning_gpu_util').value = data.warning_gpu_util || 95.0;
                     
                     // Update display values
                     document.getElementById('sample_rate_value').textContent = data.sample_rate || 1;
                     document.getElementById('standard_workload_duration_value').textContent = data.standard_workload_duration || 10;
                     document.getElementById('max_queue_wait_value').textContent = data.max_queue_wait || 120;
                     document.getElementById('warning_gpu_temp_value').textContent = data.warning_gpu_temp || 85.0;
-                    document.getElementById('warning_gpu_util_value').textContent = data.warning_gpu_util || 95.0;
                 }
             } catch (err) {
                 console.error('Failed to load settings:', err);

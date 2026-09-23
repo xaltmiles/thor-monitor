@@ -109,10 +109,6 @@ def create_app():
             if warning_gpu_temp is not None and latest.get("gpu_temp") is not None:
                 if latest["gpu_temp"] >= warning_gpu_temp:
                     gpu_warning = f"GPU temperature {latest['gpu_temp']}°C exceeds threshold {warning_gpu_temp}°C"
-            if latest.get("gpu_util") is not None and latest["gpu_util"] >= 95.0:
-                # Old warning_gpu_util threshold was 95%, but we now only show temp warnings
-                # Keep this check disabled to avoid false positives
-                pass
         
         # Convert to list for template (Jinja2 has issues with dict in template context)
         history_list = list(history) if history else []

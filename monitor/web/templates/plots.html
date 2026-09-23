@@ -257,9 +257,57 @@
     <script>
         // Store charts globally so we can destroy and recreate them
         const charts = {};
+        const canvasMarkup = `
+            <div class="chart-card">
+                <h3>Memory Usage</h3>
+                <div class="chart-wrapper"><canvas id="memory-chart"></canvas></div>
+                <div class="chart-legend">
+                    <div class="legend-item"><div class="legend-color" style="background: #00d4ff;"></div><span>Used (GiB)</span></div>
+                    <div class="legend-item"><div class="legend-color" style="background: #00ff88;"></div><span>Total (GiB)</span></div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>GPU Temperature</h3>
+                <div class="chart-wrapper"><canvas id="gpu-temp-chart"></canvas></div>
+                <div class="chart-legend">
+                    <div class="legend-item"><div class="legend-color" style="background: #ff6b6b;"></div><span>Temperature (°C)</span></div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>llama.cpp tok/s</h3>
+                <div class="chart-wrapper"><canvas id="llama-tok-s-chart"></canvas></div>
+                <div class="chart-legend">
+                    <div class="legend-item"><div class="legend-color" style="background: #00ff88;"></div><span>generated tok/s</span></div>
+                    <div class="legend-item"><div class="legend-color" style="background: #66ffb3;"></div><span>prompt tok/s</span></div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>Ollama tok/s</h3>
+                <div class="chart-wrapper"><canvas id="ollama-tok-s-chart"></canvas></div>
+                <div class="chart-legend">
+                    <div class="legend-item"><div class="legend-color" style="background: #00d4ff;"></div><span>generated tok/s</span></div>
+                    <div class="legend-item"><div class="legend-color" style="background: #4da6ff;"></div><span>prompt tok/s</span></div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>GPU Utilization</h3>
+                <div class="chart-wrapper"><canvas id="gpu-util-chart"></canvas></div>
+                <div class="chart-legend">
+                    <div class="legend-item"><div class="legend-color" style="background: #ffd93d;"></div><span>Utilization (%)</span></div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>GPU Power</h3>
+                <div class="chart-wrapper"><canvas id="gpu-power-chart"></canvas></div>
+                <div class="legend">
+                    <div class="legend-item"><div class="legend-color" style="background: #d400ff;"></div><span>Power (W)</span></div>
+                </div>
+            </div>
+        `;
         let currentLimit = 3600;  // Default to 1 hour
         let dataFetched = false;
         let lastTimestamp = null;  // For incremental fetch
+        let allData = [];  // Store all fetched data for incremental append
         
         // Colors matching the chart legends
         const COLORS = {
@@ -401,9 +449,15 @@
         }
         
         function updateCharts(data) {
+            // Always ensure canvas container has the proper markup (recreates canvases if needed)
+            const container = document.querySelector('.charts-container');
+            if (container.innerHTML.trim() !== canvasMarkup.trim()) {
+                container.innerHTML = canvasMarkup;
+            }
+            
             if (!data || data.length === 0) {
-                // Show empty state
-                document.querySelector('.charts-container').innerHTML = `
+                // Show empty state but keep canvases
+                container.innerHTML = `
                     <div class="empty-state" style="grid-column: 1 / -1;">
                         <p>No telemetry data available yet.</p>
                         <p>The system will start collecting data once telemetry sampling begins.</p>
@@ -488,15 +542,28 @@
                 ? await fetchData(limit, lastTimestamp)
                 : await fetchData(limit);
             
-            // Update lastTimestamp for both full and incremental fetches
+            // Update lastTimestamp and store all data for incremental append
             if (data.length > 0) {
                 // data is already reversed (newest-first -> oldest-first)
                 // So data[0] is oldest, data[data.length-1] is newest
                 // Use the newest sample's timestamp as the cursor for next incremental fetch
                 lastTimestamp = data[data.length - 1].timestamp;
+                
+                if (isIncremental) {
+                    // For incremental fetch, append new data to allData
+                    // Filter out any duplicates (sample at cursor is returned by >= comparison)
+                    const existingTimestamps = new Set(allData.map(d => d.timestamp));
+                    const newData = data.filter(d => !existingTimestamps.has(d.timestamp));
+                    allData = allData.concat(newData);
+                    // Re-sort to ensure chronological order
+                    allData.sort((a, b) => a.timestamp - b.timestamp);
+                } else {
+                    // Full fetch, replace all data
+                    allData = data;
+                }
             }
             
-            updateCharts(data);
+            updateCharts(allData);
         }
         
         // Initialize charts on page load

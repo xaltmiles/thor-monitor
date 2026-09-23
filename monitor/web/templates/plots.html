@@ -70,6 +70,23 @@
             font-weight: bold;
         }
         
+        .reset-zoom-btn {
+            background: #16213e;
+            border: 1px solid #ff6b6b;
+            color: #ff6b6b;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9em;
+        }
+        
+        .reset-zoom-btn:hover {
+            background: #6e2a2a;
+            border-color: #ff8888;
+            color: #ff8888;
+        }
+        
         .charts-container {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
@@ -423,11 +440,6 @@
             }
         }
         
-        // Helper to convert timestamp to Chart.js time format
-        function timestampToTime(ts) {
-            return new Date(ts).getTime();
-        }
-        
         // Apply saved zoom range to a chart
         function applyZoomRange(chart, minTime, maxTime) {
             if (minTime !== null && maxTime !== null) {
@@ -517,11 +529,10 @@
                             ticks: {
                                 color: '#888',
                                 maxTicksLimit: 10,
-                                callback: function(val, index, ticks) {
-                                    if (index % Math.ceil(labels.length / 10) === 0) {
-                                        return formatTimestamp(labels[val]);
-                                    }
-                                    return '';
+                                callback: function(val) {
+                                    // val is already a millisecond epoch value for time scale
+                                    // Format it directly without indexing the labels array
+                                    return formatTimestamp(val);
                                 }
                             },
                             // Synchronized time axis configuration
@@ -552,12 +563,6 @@
             
             // Store chart name for reference
             chart.chartName = chartName;
-            
-            // Add double-click to reset zoom
-            chart.canvas.addEventListener('dblclick', function() {
-                resetZoom();
-            });
-            
             return chart;
         }
         
@@ -656,11 +661,37 @@
             
             // Apply saved zoom range if available (preserved across refreshes)
             if (lastZoomRange && lastZoomRange.min !== null && lastZoomRange.max !== null) {
-                // Apply to all charts
-                for (const name in charts) {
-                    if (charts[name]) {
-                        applyZoomRange(charts[name], lastZoomRange.min, lastZoomRange.max);
+                // Clamp saved zoom range to current data bounds to prevent empty window
+                const dataMin = timestamps[0];
+                const dataMax = timestamps[timestamps.length - 1];
+                const clampedMin = Math.max(lastZoomRange.min, dataMin);
+                const clampedMax = Math.min(lastZoomRange.max, dataMax);
+                
+                // Only apply if the clamped range is valid (min < max and within bounds)
+                if (clampedMin < clampedMax) {
+                    // Apply to all charts
+                    for (const name in charts) {
+                        if (charts[name]) {
+                            applyZoomRange(charts[name], clampedMin, clampedMax);
+                        }
                     }
+                } else {
+                    // Range is outside data bounds; clear it so charts show full data
+                    lastZoomRange = null;
+                }
+            }
+            
+            // Add single double-click listener for reset zoom (only once)
+            if (!charts.dblclickListenerAdded) {
+                const chartsContainer = document.querySelector('.charts-container');
+                if (chartsContainer) {
+                    chartsContainer.addEventListener('dblclick', function(e) {
+                        // Only trigger if clicking on a chart canvas
+                        if (e.target.tagName === 'CANVAS') {
+                            resetZoom();
+                        }
+                    });
+                    charts.dblclickListenerAdded = true;
                 }
             }
         }

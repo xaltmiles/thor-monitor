@@ -6,6 +6,8 @@
     <title>Plots - Monitor</title>
     <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.10"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
     <style>
         * {
             margin: 0;
@@ -155,6 +157,7 @@
             <button class="range-btn" data-limit="3600" data-default="true">Last 1h</button>
             <button class="range-btn" data-limit="21600">Last 6h</button>
             <button class="range-btn" data-limit="86400">Last 24h</button>
+            <button class="range-btn" id="reset-zoom-btn">Reset Zoom</button>
         </div>
         
         <div class="charts-container">
@@ -257,6 +260,13 @@
     <script>
         // Store charts globally so we can destroy and recreate them
         const charts = {};
+        // Synchronize zoom across all charts - store shared time range
+        let sharedTimeRange = { min: null, max: null };
+        // Track which chart triggered the last zoom for synchronization
+        let lastZoomSource = null;
+        // Store the last zoom range to preserve across refreshes
+        let lastZoomRange = null;
+        
         const canvasMarkup = `
             <div class="chart-card">
                 <h3>Memory Usage</h3>
@@ -372,7 +382,62 @@
             Object.keys(charts).forEach(key => delete charts[key]);
         }
         
-        function createLineChart(ctx, datasets, labels) {
+        // Synchronized zoom across all charts
+        function synchronizedZoom(sourceChart) {
+            // Don't sync if this chart didn't trigger the zoom
+            if (lastZoomSource === sourceChart) {
+                lastZoomSource = null;
+                return;
+            }
+            
+            // Get the current zoom range from the source chart
+            const xScale = sourceChart.scales.x;
+            if (!xScale) return;
+            
+            const minTime = xScale.min;
+            const maxTime = xScale.max;
+            
+            // Update shared time range
+            sharedTimeRange = { min: minTime, max: maxTime };
+            
+            // Apply the same range to all other charts
+            for (const name in charts) {
+                if (charts[name] !== sourceChart && charts[name]) {
+                    lastZoomSource = charts[name];
+                    charts[name].zoomRange({
+                        x: { min: minTime, max: maxTime },
+                    });
+                }
+            }
+        }
+        
+        // Reset zoom on all charts
+        function resetZoom() {
+            sharedTimeRange = { min: null, max: null };
+            lastZoomRange = null;
+            
+            for (const name in charts) {
+                if (charts[name]) {
+                    charts[name].showAllData();
+                }
+            }
+        }
+        
+        // Helper to convert timestamp to Chart.js time format
+        function timestampToTime(ts) {
+            return new Date(ts).getTime();
+        }
+        
+        // Apply saved zoom range to a chart
+        function applyZoomRange(chart, minTime, maxTime) {
+            if (minTime !== null && maxTime !== null) {
+                chart.zoomRange({
+                    x: { min: minTime, max: maxTime },
+                });
+            }
+        }
+        
+        function createLineChart(ctx, datasets, labels, chartName) {
             const chartData = {
                 type: 'line',
                 data: {
@@ -415,7 +480,34 @@
                                     return `${context.dataset.label}: ${context.parsed.y}`;
                                 }
                             }
-                        }
+                        },
+                        // Zoom and pan plugin configuration
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'x',
+                                onPanComplete: function({ chart }) {
+                                    synchronizedZoom(chart);
+                                },
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true,
+                                    mode: 'x',
+                                },
+                                pinch: {
+                                    enabled: true,
+                                    mode: 'x',
+                                },
+                                drag: {
+                                    enabled: true,
+                                    mode: 'x',
+                                },
+                                onZoomComplete: function({ chart }) {
+                                    synchronizedZoom(chart);
+                                },
+                            },
+                        },
                     },
                     scales: {
                         x: {
@@ -431,7 +523,18 @@
                                     }
                                     return '';
                                 }
-                            }
+                            },
+                            // Synchronized time axis configuration
+                            adapters: {
+                                date: {
+                                    zone: 'UTC',
+                                },
+                            },
+                            type: 'time',
+                            time: {
+                                unit: 'second',
+                                tooltipFormat: 'pp',
+                            },
                         },
                         y: {
                             grid: {
@@ -445,7 +548,17 @@
                 }
             };
             
-            return new Chart(ctx, chartData);
+            const chart = new Chart(ctx, chartData);
+            
+            // Store chart name for reference
+            chart.chartName = chartName;
+            
+            // Add double-click to reset zoom
+            chart.canvas.addEventListener('dblclick', function() {
+                resetZoom();
+            });
+            
+            return chart;
         }
         
         function updateCharts(data) {
@@ -470,6 +583,11 @@
             
             const timestamps = data.map(row => row.timestamp);
             
+            // Store current zoom range if active (for preservation across refreshes)
+            if (sharedTimeRange.min !== null && sharedTimeRange.max !== null) {
+                lastZoomRange = { min: sharedTimeRange.min, max: sharedTimeRange.max };
+            }
+            
             // Memory chart (2 datasets)
             const memoryUsed = data.map(row => {
                 if (row.memory_used !== null) {
@@ -489,14 +607,14 @@
             charts.memory = createLineChart(memoryCtx, [
                 { label: 'Used', data: memoryUsed, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false },
                 { label: 'Total', data: memoryTotal, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false }
-            ], timestamps);
+            ], timestamps, 'memory');
             
             // GPU Temp chart (1 dataset)
             const gpuTemp = data.map(row => row.gpu_temp);
             const gpuTempCtx = document.getElementById('gpu-temp-chart').getContext('2d');
             charts.gpuTemp = createLineChart(gpuTempCtx, [
                 { label: 'Temperature', data: gpuTemp, borderColor: COLORS.gpuTemp, hoverBorderColor: COLORS.gpuTempHover, fill: false }
-            ], timestamps);
+            ], timestamps, 'gpuTemp');
             
             // llama.cpp tok/s chart (two series: generated and prompt)
             const llamaGeneratedTokS = data.map(row => parseStats(row.llama_stats, 'generated_tokens_rate'));
@@ -505,7 +623,7 @@
             charts.llamaTokS = createLineChart(llamaTokSCtx, [
                 { label: 'generated tok/s', data: llamaGeneratedTokS, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false },
                 { label: 'prompt tok/s', data: llamaPromptTokS, borderColor: COLORS.llamaPrompt, hoverBorderColor: COLORS.llamaPromptHover, fill: false }
-            ], timestamps);
+            ], timestamps, 'llamaTokS');
             
             // Ollama tok/s chart (two series: generated and prompt)
             const ollamaGeneratedTokS = data.map(row => parseStats(row.ollama_stats, 'ollama_generated_tokens_rate'));
@@ -514,26 +632,36 @@
             charts.ollamaTokS = createLineChart(ollamaTokSCtx, [
                 { label: 'generated tok/s', data: ollamaGeneratedTokS, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false },
                 { label: 'prompt tok/s', data: ollamaPromptTokS, borderColor: COLORS.ollamaPrompt, hoverBorderColor: COLORS.ollamaPromptHover, fill: false }
-            ], timestamps);
+            ], timestamps, 'ollamaTokS');
             
             // GPU Util chart (1 dataset)
             const gpuUtil = data.map(row => row.gpu_util);
             const gpuUtilCtx = document.getElementById('gpu-util-chart').getContext('2d');
             charts.gpuUtil = createLineChart(gpuUtilCtx, [
                 { label: 'Utilization', data: gpuUtil, borderColor: COLORS.gpuUtil, hoverBorderColor: COLORS.gpuUtilHover, fill: false }
-            ], timestamps);
+            ], timestamps, 'gpuUtil');
             
             // GPU Power chart (1 dataset)
             const gpuPower = data.map(row => row.gpu_power);
             const gpuPowerCtx = document.getElementById('gpu-power-chart').getContext('2d');
             charts.gpuPower = createLineChart(gpuPowerCtx, [
                 { label: 'Power', data: gpuPower, borderColor: COLORS.gpuPower, hoverBorderColor: COLORS.gpuPowerHover, fill: false }
-            ], timestamps);
+            ], timestamps, 'gpuPower');
             
             // Update last updated timestamp
             if (data.length > 0) {
                 const lastTimestamp = new Date(data[data.length - 1].timestamp);
                 document.getElementById('last-updated').textContent = lastTimestamp.toLocaleString();
+            }
+            
+            // Apply saved zoom range if available (preserved across refreshes)
+            if (lastZoomRange && lastZoomRange.min !== null && lastZoomRange.max !== null) {
+                // Apply to all charts
+                for (const name in charts) {
+                    if (charts[name]) {
+                        applyZoomRange(charts[name], lastZoomRange.min, lastZoomRange.max);
+                    }
+                }
             }
         }
         
@@ -584,10 +712,16 @@
                     // Get new limit
                     currentLimit = parseInt(this.dataset.limit, 10);
                     
+                    // Reset zoom on button click (changing time range should reset zoom)
+                    resetZoom();
+                    
                     // Fetch and update charts (full fetch, not incremental)
                     await loadCharts(currentLimit, false);
                 });
             });
+            
+            // Reset zoom button handler
+            document.getElementById('reset-zoom-btn').addEventListener('click', resetZoom);
             
             // Auto-refresh every 30 seconds - use incremental fetch when possible
             setInterval(async function() {

@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from ..store import get_latest_telemetry, get_telemetry_history
+from ..store import get_latest_telemetry, get_telemetry_history, get_telemetry_history_for_plots, get_telemetry_history_by_range
 from .catalog import get_comparison_data, get_timeline_data
 from ..telemetry.real import RealMemorySource, RealGPUSource, RealProcessSource
 from ..telemetry.fixtures import FixtureMemorySource, FixtureGPUSource, FixtureProcessSource, FixtureGPUMemorySource, FixtureLLaMAStatsSource, FixtureTelemetrySource
@@ -132,6 +132,20 @@ def create_app():
         """Get recent telemetry history."""
         return await get_telemetry_history(limit)
     
+    @app.get("/api/plots/history")
+    async def api_plots_history(limit: int = 60, since: str = None):
+        """Get telemetry history for plots page.
+        
+        Returns only columns needed for plots (no process_memory, gpu_process_memory).
+        Supports ?since=<timestamp> for incremental fetch.
+        """
+        if since:
+            # Incremental fetch: get samples since the given timestamp
+            return await get_telemetry_history_by_range(start_time=since, limit=limit)
+        else:
+            # Full fetch: get last N samples
+            return await get_telemetry_history_for_plots(limit)
+    
     @app.get("/api/fixtures/telemetry")
     async def api_fixture_telemetry():
         """Get fixture telemetry for testing."""
@@ -205,8 +219,22 @@ def create_app():
     
     @app.get("/api/telemetry/history")
     async def api_telemetry_history(limit: int = 60):
-        """Get recent telemetry history."""
+        """Get recent telemetry history (legacy - returns all columns)."""
         return await get_telemetry_history(limit)
+    
+    @app.get("/api/plots/history")
+    async def api_plots_history(limit: int = 60, since: str = None):
+        """Get telemetry history for plots page.
+        
+        Returns only columns needed for plots (no process_memory, gpu_process_memory).
+        Supports ?since=<timestamp> for incremental fetch.
+        """
+        if since:
+            # Incremental fetch: get samples since the given timestamp
+            return await get_telemetry_history_by_range(start_time=since, limit=limit)
+        else:
+            # Full fetch: get last N samples
+            return await get_telemetry_history_for_plots(limit)
     
     @app.get("/api/fixtures/llama-stats")
     async def api_fixture_llama_stats():

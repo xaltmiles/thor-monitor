@@ -150,10 +150,11 @@
         <p class="subtitle">Real-time charts for memory, GPU temperature, and token generation speed</p>
         
         <div class="range-selector">
-            <button class="range-btn active" data-limit="300">Last 5m</button>
             <button class="range-btn" data-limit="60">Last 1m</button>
             <button class="range-btn" data-limit="900">Last 15m</button>
-            <button class="range-btn" data-limit="3600">Last 1h</button>
+            <button class="range-btn" data-limit="3600" data-default="true">Last 1h</button>
+            <button class="range-btn" data-limit="21600">Last 6h</button>
+            <button class="range-btn" data-limit="86400">Last 24h</button>
         </div>
         
         <div class="charts-container">
@@ -256,8 +257,9 @@
     <script>
         // Store charts globally so we can destroy and recreate them
         const charts = {};
-        let currentLimit = 300;
+        let currentLimit = 3600;  // Default to 1 hour
         let dataFetched = false;
+        let lastTimestamp = null;  // For incremental fetch
         
         // Colors matching the chart legends
         const COLORS = {
@@ -277,9 +279,13 @@
             gpuPowerHover: '#e633ff',
         };
         
-        async function fetchData(limit) {
+        async function fetchData(limit, since = null) {
             try {
-                const response = await fetch(`/api/telemetry/history?limit=${limit}`);
+                const url = since
+                    ? `/api/plots/history?since=${encodeURIComponent(since)}&limit=${limit}`
+                    : `/api/plots/history?limit=${limit}`;
+                
+                const response = await fetch(url);
                 const data = await response.json();
                 
                 // Reverse the array: API returns newest-first, Chart.js expects oldest-first
@@ -477,14 +483,24 @@
             }
         }
         
-        async function loadCharts(limit) {
-            const data = await fetchData(limit);
+        async function loadCharts(limit, isIncremental = false) {
+            const data = isIncremental
+                ? await fetchData(limit, lastTimestamp)
+                : await fetchData(limit);
+            
+            if (!isIncremental && data.length > 0) {
+                // On full fetch, update lastTimestamp to oldest data point
+                lastTimestamp = data[0].timestamp;
+            }
+            
             updateCharts(data);
         }
         
         // Initialize charts on page load
         document.addEventListener('DOMContentLoaded', async function() {
-            currentLimit = 300;
+            // Find default limit (3600 for 1h)
+            const defaultBtn = document.querySelector('[data-default="true"]');
+            currentLimit = defaultBtn ? parseInt(defaultBtn.dataset.limit, 10) : 3600;
             await loadCharts(currentLimit);
             dataFetched = true;
             
@@ -498,15 +514,15 @@
                     // Get new limit
                     currentLimit = parseInt(this.dataset.limit, 10);
                     
-                    // Fetch and update charts
-                    await loadCharts(currentLimit);
+                    // Fetch and update charts (full fetch, not incremental)
+                    await loadCharts(currentLimit, false);
                 });
             });
             
-            // Auto-refresh every 30 seconds
+            // Auto-refresh every 30 seconds - use incremental fetch
             setInterval(async function() {
-                if (dataFetched) {
-                    await loadCharts(currentLimit);
+                if (dataFetched && lastTimestamp) {
+                    await loadCharts(currentLimit, true);
                 }
             }, 30000);
         });

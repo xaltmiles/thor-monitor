@@ -35,8 +35,17 @@ async def init_db():
                 gpu_util REAL,
                 gpu_temp REAL,
                 gpu_power REAL,
-                process_memory TEXT
+                process_memory TEXT,
+                gpu_process_memory TEXT,
+                llama_stats TEXT,
+                ollama_stats TEXT
             )
+        """)
+        
+        # Create index on timestamp for efficient time-range queries
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_telemetry_samples_timestamp 
+            ON telemetry_samples(timestamp)
         """)
         
         # Check if gpu_process_memory column exists
@@ -77,6 +86,12 @@ async def init_db():
                 ADD COLUMN ollama_stats TEXT
             """)
             await db.commit()
+        
+        # Create index on timestamp for efficient time-range queries (migration for existing DBs)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_telemetry_samples_timestamp 
+            ON telemetry_samples(timestamp)
+        """)
         
         await db.execute("""
             CREATE TABLE IF NOT EXISTS models (
@@ -277,7 +292,7 @@ async def get_latest_telemetry():
 
 
 async def get_telemetry_history(limit=100):
-    """Get recent telemetry samples."""
+    """Get recent telemetry samples (legacy - returns all columns for backward compatibility)."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -286,6 +301,86 @@ async def get_telemetry_history(limit=100):
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+async def get_telemetry_history_for_plots(limit=100):
+    """Get recent telemetry samples for plots page.
+    
+    Returns only columns needed for plots to minimize payload size:
+    timestamp, gpu_util, gpu_temp, gpu_power, memory_used, memory_total,
+    llama_stats, ollama_stats
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT timestamp, gpu_util, gpu_temp, gpu_power, 
+                      memory_used, memory_total, llama_stats, ollama_stats
+               FROM telemetry_samples 
+               ORDER BY timestamp DESC LIMIT ?""",
+            (limit,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def get_telemetry_history_by_range(start_time: str, end_time: str = None, limit: int = None):
+    """Get telemetry samples within a time range.
+    
+    Args:
+        start_time: Start timestamp (ISO format)
+        end_time: End timestamp (ISO format), optional
+        limit: Maximum number of samples, optional
+        
+    Returns:
+        List of telemetry samples with only plot-required columns
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        
+        if end_time:
+            if limit:
+                async with db.execute(
+                    """SELECT timestamp, gpu_util, gpu_temp, gpu_power, 
+                              memory_used, memory_total, llama_stats, ollama_stats
+                       FROM telemetry_samples 
+                       WHERE timestamp >= ? AND timestamp <= ?
+                       ORDER BY timestamp DESC LIMIT ?""",
+                    (start_time, end_time, limit)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            else:
+                async with db.execute(
+                    """SELECT timestamp, gpu_util, gpu_temp, gpu_power, 
+                              memory_used, memory_total, llama_stats, ollama_stats
+                       FROM telemetry_samples 
+                       WHERE timestamp >= ? AND timestamp <= ?
+                       ORDER BY timestamp DESC""",
+                    (start_time, end_time)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+        else:
+            if limit:
+                async with db.execute(
+                    """SELECT timestamp, gpu_util, gpu_temp, gpu_power, 
+                              memory_used, memory_total, llama_stats, ollama_stats
+                       FROM telemetry_samples 
+                       WHERE timestamp >= ?
+                       ORDER BY timestamp DESC LIMIT ?""",
+                    (start_time, limit)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            else:
+                async with db.execute(
+                    """SELECT timestamp, gpu_util, gpu_temp, gpu_power, 
+                              memory_used, memory_total, llama_stats, ollama_stats
+                       FROM telemetry_samples 
+                       WHERE timestamp >= ?
+                       ORDER BY timestamp DESC""",
+                    (start_time,)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+        
+        return [dict(row) for row in rows]
 
 
 async def insert_model(

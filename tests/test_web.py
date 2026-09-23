@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from monitor.web.routes import app
 from monitor.telemetry.fixtures import FixtureMemorySource, FixtureGPUSource, FixtureProcessSource, FixtureTelemetrySource
 from monitor.sampler import Sampler
+from monitor.store import insert_telemetry_sample
 
 
 # Override the DB_PATH for tests
@@ -338,11 +339,13 @@ async def test_plots_html_returns_200_with_charts(test_client, test_db_path):
     # Assert the combined rendered markup: <a href="/plots" class="active">
     assert '<a href="/plots" class="active">' in html
     
-    # Check for range selector buttons (1m, 5m, 15m, 1h)
+    # Check for range selector buttons (1m, 15m, 1h, 6h, 24h - with 1h as default)
     assert 'data-limit="60"' in html  # 1m
-    assert 'data-limit="300"' in html  # 5m
     assert 'data-limit="900"' in html  # 15m
-    assert 'data-limit="3600"' in html  # 1h
+    assert 'data-limit="3600"' in html  # 1h (default)
+    assert 'data-limit="21600"' in html  # 6h
+    assert 'data-limit="86400"' in html  # 24h
+    assert 'data-default="true"' in html  # 1h is the default
 
 
 def test_dashboard_template_has_separate_last_rate_elements():
@@ -512,3 +515,99 @@ async def test_dashboard_no_cross_contamination_prompt_generate(test_client, tes
     
     # Verify that updateLastRateDisplay uses the metric type parameter to distinguish prompt vs generate
     assert "metric === 'prompt'" in html or "metric == 'prompt'" in html
+
+
+@pytest.mark.asyncio
+async def test_api_plots_history_returns_only_required_columns(test_client):
+    """Test that /api/plots/history returns only columns needed for plots."""
+    import json
+    
+    # Insert a sample with all columns
+    await insert_telemetry_sample(
+        memory_total=32_000_000_000,
+        memory_free=16_000_000_000,
+        memory_used=16_000_000_000,
+        gpu_util=45.0,
+        gpu_temp=70.0,
+        gpu_power=150.0,
+        process_memory=json.dumps([{"pid": 1234, "name": "test", "rss": 1_000_000_000}]),
+        gpu_process_memory=json.dumps([{"pid": 1234, "name": "test", "gpu_memory": 8_000_000_000}]),
+        llama_stats=json.dumps({"generated_tokens_rate": 10.0, "prompt_tokens_rate": 5.0}),
+        ollama_stats=json.dumps({"ollama_generated_tokens_rate": 15.0, "ollama_prompt_tokens_rate": 7.0})
+    )
+    
+    response = test_client.get("/api/plots/history?limit=1")
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 1
+    
+    row = data[0]
+    
+    # Should have columns needed for plots
+    assert "timestamp" in row
+    assert "gpu_util" in row
+    assert "gpu_temp" in row
+    assert "gpu_power" in row
+    assert "memory_used" in row
+    assert "memory_total" in row
+    assert "llama_stats" in row
+    assert "ollama_stats" in row
+    
+    # Should NOT have large columns
+    assert "process_memory" not in row
+    assert "gpu_process_memory" not in row
+
+
+@pytest.mark.asyncio
+async def test_api_plots_history_payload_size_reduction(test_client):
+    """Test that payload size is significantly reduced with column pruning."""
+    import json
+    
+    # Insert sample with large columns
+    large_process_memory = json.dumps([
+        {"pid": i, "name": f"process_{i}", "rss": 1_000_000_000 + i * 100_000_000}
+        for i in range(100)
+    ])
+    large_gpu_process_memory = json.dumps([
+        {"pid": i, "name": f"gpu_process_{i}", "gpu_memory": 500_000_000 + i * 50_000_000}
+        for i in range(100)
+    ])
+    
+    await insert_telemetry_sample(
+        memory_total=32_000_000_000,
+        memory_free=16_000_000_000,
+        memory_used=16_000_000_000,
+        gpu_util=45.0,
+        gpu_temp=70.0,
+        gpu_power=150.0,
+        process_memory=large_process_memory,
+        gpu_process_memory=large_gpu_process_memory,
+        llama_stats=json.dumps({"generated_tokens_rate": 10.0}),
+        ollama_stats=json.dumps({"ollama_generated_tokens_rate": 15.0})
+    )
+    
+    # Get via old endpoint (returns all columns)
+    response_old = test_client.get("/api/telemetry/history?limit=1")
+    assert response_old.status_code == 200
+    old_data = response_old.json()
+    old_size = len(json.dumps(old_data))
+    
+    # Get via new endpoint (returns only plot columns)
+    response_new = test_client.get("/api/plots/history?limit=1")
+    assert response_new.status_code == 200
+    new_data = response_new.json()
+    new_size = len(json.dumps(new_data))
+    
+    # New payload should be significantly smaller (no process_memory, gpu_process_memory)
+    assert new_size < old_size * 0.5, f"Payload not reduced enough: {new_size} vs {old_size}"
+
+
+@pytest.mark.asyncio
+async def test_api_plots_history_empty_database(test_client):
+    """Test that /api/plots/history returns empty list for empty database."""
+    response = test_client.get("/api/plots/history?limit=100")
+    assert response.status_code == 200
+    data = response.json()
+    assert data == []

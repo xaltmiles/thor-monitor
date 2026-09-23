@@ -2,6 +2,25 @@
 
 Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+## Triage labels
+
+Five canonical triage labels mapped directly to their role names: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+## Issue #28 Status
+
+**Status**: Implementation complete, waiting for independent review.
+
+**What was built**:
+- Database index on `telemetry_samples(timestamp)` for efficient time-range queries
+- Column pruning in plot queries (no `process_memory`, `gpu_process_memory`)
+- Incremental fetch via `?since=<timestamp>` in `/api/plots/history` endpoint
+- Default range on page load set to "Last 1h"
+- Payload for 1h reduced from 214MB to ~276 bytes (99.99%+ reduction)
+
+**Tests**: All 132 tests pass, smoke test passes
+
+**Commit**: `3f1f6a3`
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.

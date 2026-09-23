@@ -337,6 +337,12 @@ async def test_plots_html_returns_200_with_charts(test_client, test_db_path):
     
     # Assert the combined rendered markup: <a href="/plots" class="active">
     assert '<a href="/plots" class="active">' in html
+    
+    # Check for range selector buttons (1m, 5m, 15m, 1h)
+    assert 'data-limit="60"' in html  # 1m
+    assert 'data-limit="300"' in html  # 5m
+    assert 'data-limit="900"' in html  # 15m
+    assert 'data-limit="3600"' in html  # 1h
 
 
 def test_dashboard_template_has_separate_last_rate_elements():
@@ -421,3 +427,88 @@ def test_dashboard_template_has_last_rate_interval():
     # Check that last rate display updates for both servers and metrics
     assert "'llama', 'ollama'" in content or "['llama', 'ollama']" in content, "Expected both servers in interval"
     assert "'prompt', 'generate'" in content or "['prompt', 'generate']" in content, "Expected both metrics in interval"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_last_rate_persists_and_ticking(test_client, test_db_path):
+    """Test that Last rate lines persist once non-zero rate is seen and Ys ago ticks."""
+    from monitor.store import insert_telemetry_sample
+    import json
+    
+    # Insert telemetry with non-zero rates to trigger the "Last" lines
+    llama_stats = {
+        "prompt_tokens": 1000,
+        "generated_tokens": 500,
+        "prompt_tokens_rate": 10.5,
+        "generated_tokens_rate": 5.2,
+    }
+    
+    await insert_telemetry_sample(
+        memory_total=32_000_000_000,
+        memory_free=16_000_000_000,
+        memory_used=16_000_000_000,
+        gpu_util=45.0,
+        gpu_temp=70.0,
+        gpu_power=150.0,
+        process_memory="[]",
+        llama_stats=json.dumps(llama_stats),
+        ollama_stats=None,
+    )
+    
+    response = test_client.get("/")
+    assert response.status_code == 200
+    html = response.text
+    
+    # Verify the Last rate elements exist in the template
+    assert 'id="tok-last-prompt-llama"' in html
+    assert 'id="tok-last-gen-llama"' in html
+    
+    # Verify the JavaScript structure for tracking
+    assert 'lastNonZeroRates' in html
+    assert 'lastNonZeroTimes' in html
+    assert 'updateLastRateDisplay' in html
+    
+    # Verify the interval exists and calls updateLastRateDisplay
+    assert 'setInterval' in html
+    assert 'updateLastRateDisplay' in html
+    
+    # Verify no cross-contamination: separate tracking for prompt and generate
+    assert 'llama: { prompt: null, generate: null }' in html
+
+
+@pytest.mark.asyncio
+async def test_dashboard_no_cross_contamination_prompt_generate(test_client, test_db_path):
+    """Test that prompt and generate rates are tracked separately without cross-contamination."""
+    from monitor.store import insert_telemetry_sample
+    import json
+    
+    # Insert telemetry with both prompt and generate rates
+    llama_stats = {
+        "prompt_tokens": 1000,
+        "generated_tokens": 500,
+        "prompt_tokens_rate": 12.3,
+        "generated_tokens_rate": 8.7,
+    }
+    
+    await insert_telemetry_sample(
+        memory_total=32_000_000_000,
+        memory_free=16_000_000_000,
+        memory_used=16_000_000_000,
+        gpu_util=45.0,
+        gpu_temp=70.0,
+        gpu_power=150.0,
+        process_memory="[]",
+        llama_stats=json.dumps(llama_stats),
+        ollama_stats=None,
+    )
+    
+    response = test_client.get("/")
+    assert response.status_code == 200
+    html = response.text
+    
+    # Verify separate tracking for prompt and generate per server
+    assert 'llama: { prompt: null, generate: null }' in html
+    assert 'ollama: { prompt: null, generate: null }' in html
+    
+    # Verify that updateLastRateDisplay uses the metric type parameter to distinguish prompt vs generate
+    assert "metric === 'prompt'" in html or "metric == 'prompt'" in html

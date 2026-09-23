@@ -486,9 +486,6 @@
         // Last rate update interval (for updating "Ys ago" display)
         const lastRateUpdateInterval = 1000;
         
-        // Store the detected server type from probe data
-        let detectedServerType = 'llama-server'; // default
-        
         // Update "Last: X tok/s · Ys ago" display for a specific metric
         // This runs continuously to update the "Ys ago" counter
         function updateLastRateDisplay(server, metric) {
@@ -612,6 +609,7 @@
                 // Update llama.cpp/unsloth speeds
                 updateLlamaTokenSpeed('tok-prompt-llama', 'prompt_tokens_rate');
                 updateLlamaTokenSpeed('tok-generate-llama', 'generated_tokens_rate');
+                updateLlamaTokenSpeed('tok-spec-llama', 'speculative_accepts_rate');
                 
                 // Update ollama speeds
                 updateOllamaTokenSpeed('tok-prompt-ollama', 'ollama_prompt_tokens_rate');

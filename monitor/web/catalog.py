@@ -17,8 +17,8 @@ async def get_comparison_data() -> Dict[str, Any]:
     """
     # Get all models to look up file_size
     all_models = await get_all_models()
-    # Use a tuple of (name, quant) as key to avoid collision from model names containing '_'
-    models_by_key = {(m.get('name'), m.get('quant')): m for m in all_models}
+    # Use a tuple of (name, quant, server_type) as key to avoid collision
+    models_by_key = {(m.get('name'), m.get('quant'), m.get('server_type')): m for m in all_models}
     
     # Get all standard benchmark runs
     runs = await get_benchmark_runs(limit=1000)
@@ -26,11 +26,11 @@ async def get_comparison_data() -> Dict[str, Any]:
     # Filter to standard runs only
     standard_runs = [r for r in runs if r.get("standard_run", False)]
     
-    # Group by model (name + quant combination)
-    # Use a tuple of (name, quant) as key to avoid collision from model names containing '_'
+    # Group by model (name + quant + server_type combination)
+    # Use a tuple of (name, quant, server_type) as key to separate runs by server type
     model_runs: Dict[tuple, List[Dict]] = {}
     for run in standard_runs:
-        model_key = (run.get('model_name', 'unknown'), run.get('model_quant', 'unknown'))
+        model_key = (run.get('model_name', 'unknown'), run.get('model_quant', 'unknown'), run.get('server_type', 'unknown'))
         if model_key not in model_runs:
             model_runs[model_key] = []
         model_runs[model_key].append(run)
@@ -38,9 +38,8 @@ async def get_comparison_data() -> Dict[str, Any]:
     # Build comparison data
     comparison_data = []
     for model_key, run_list in model_runs.items():
-        model_name, model_quant = model_key  # Unpack tuple key
+        model_name, model_quant, server_type = model_key  # Unpack tuple key
         context_length = run_list[0].get("context_length")
-        server_type = run_list[0].get("server_type")
         
         # Look up file_size from models table
         file_size = None
@@ -139,6 +138,9 @@ async def get_timeline_data() -> Dict[str, Any]:
         concurrent_throughput = run.get("concurrent_throughput")
         ttft = run.get("ttft")
         
+        # Build details string with server type indicator
+        server_indicator = f"{server_type} | " if server_type else ""
+        
         details_parts = []
         if gen_tok_s:
             details_parts.append(f"gen: {gen_tok_s:.1f} tok/s")
@@ -150,6 +152,7 @@ async def get_timeline_data() -> Dict[str, Any]:
             details_parts.append(f"TTFT: {ttft:.2f}s")
         
         details = ", ".join(details_parts) if details_parts else "benchmark run"
+        details = f"{server_indicator}{details}"
         
         # Get memory footprint
         memory_footprint = None

@@ -195,7 +195,7 @@
                 <div class="chart-legend">
                     <div class="legend-item">
                         <div class="legend-color" style="background: #00d4ff;"></div>
-                        <span>Llama tok/s</span>
+                        <span>llama.cpp tok/s</span>
                     </div>
                     <div class="legend-item">
                         <div class="legend-color" style="background: #00ff88;"></div>
@@ -423,7 +423,7 @@
             
             const tokSCtx = document.getElementById('tok-s-chart').getContext('2d');
             charts.tokS = createLineChart(tokSCtx, [
-                { label: 'Llama tok/s', data: llamaTokS, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false },
+                { label: 'llama.cpp tok/s', data: llamaTokS, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false },
                 { label: 'Ollama tok/s', data: ollamaTokS, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false }
             ], timestamps);
             

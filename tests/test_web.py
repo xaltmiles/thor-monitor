@@ -329,7 +329,8 @@ async def test_plots_html_returns_200_with_charts(test_client, test_db_path):
     # Check for expected chart containers
     assert 'id="memory-chart"' in html
     assert 'id="gpu-temp-chart"' in html
-    assert 'id="tok-s-chart"' in html
+    assert 'id="llama-tok-s-chart"' in html
+    assert 'id="ollama-tok-s-chart"' in html
     
     # Check that Chart.js is included
     assert 'cdn.jsdelivr.net/npm/chart.js' in html

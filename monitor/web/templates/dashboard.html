@@ -75,6 +75,10 @@
             color: #ff6b6b;
         }
         
+        .metric-value.idle {
+            color: #666;
+        }
+        
         .update-time {
             font-size: 0.85em;
             color: #666;
@@ -199,60 +203,64 @@
                 </div>
             </div>
             
-            <!-- Token Speeds Card -->
-            {% set server_type = models.servers[0].type if models and models.servers and models.servers|length > 0 else 'llama-server' %}
+            <!-- llama.cpp/unsloth Token Speeds Card -->
             <div class="card">
-                <h2>Token Speeds ({{ server_type }})</h2>
+                <h2>Token Speeds (llama.cpp)</h2>
                 {% set llama = latest.llama_stats | from_json if latest and latest.llama_stats else {} %}
+                <div class="metric">
+                    <span class="metric-label">Prompt tok/s (llama.cpp)</span>
+                    <span class="metric-value" id="tok-prompt-llama">
+                        {%- if llama and llama | length > 0 and llama.get('prompt_tokens_rate_avg') is not none -%}
+                            {{ llama.get('prompt_tokens_rate_avg', 0) | round(1) }}
+                        {%- else -%}
+                            <span class="metric-value idle">idle</span>
+                        {%- endif -%}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Generation tok/s (llama.cpp)</span>
+                    <span class="metric-value" id="tok-generate-llama">
+                        {%- if llama and llama | length > 0 and llama.get('generated_tokens_rate_avg') is not none -%}
+                            {{ llama.get('generated_tokens_rate_avg', 0) | round(1) }}
+                        {%- else -%}
+                            <span class="metric-value idle">idle</span>
+                        {%- endif -%}
+                    </span>
+                </div>
+                {% if llama and llama | length > 0 and llama.get('speculative_accepts_rate_avg') is not none %}
+                <div class="metric">
+                    <span class="metric-label">Speculative accepts/s (llama.cpp)</span>
+                    <span class="metric-value" id="tok-spec-llama">{{ llama.get('speculative_accepts_rate_avg', 0) | round(1) }}</span>
+                </div>
+                {% endif %}
+                <div id="tok-last-rate-llama" style="margin-top: 10px; font-size: 0.9em; color: #666; text-align: right;"></div>
+            </div>
+            
+            <!-- Ollama Token Speeds Card -->
+            <div class="card">
+                <h2>Token Speeds (Ollama)</h2>
                 {% set ollama = latest.ollama_stats | from_json if latest and latest.ollama_stats else {} %}
-                {# Determine which stats blob to use: only consider non-empty blobs that match the detected server type #}
-                {% set has_llama = llama and llama | length > 0 %}
-                {% set has_ollama = ollama and ollama | length > 0 %}
-                {% set empty_llama = llama and llama | length == 0 %}
-                {% set empty_ollama = ollama and ollama | length == 0 %}
-                {% if server_type == 'ollama' and has_ollama %}
-                    {% set active_stats = ollama %}
-                {% elif server_type == 'llama-server' and has_llama %}
-                    {% set active_stats = llama %}
-                {% elif has_ollama %}
-                    {% set active_stats = ollama %}
-                {% elif has_llama %}
-                    {% set active_stats = llama %}
-                {% else %}
-                    {% set active_stats = {} %}
-                {% endif %}
-                {% set is_ollama = active_stats and 'ollama_prompt_tokens_rate_avg' in active_stats %}
                 <div class="metric">
-                    <span class="metric-label">Prompt tok/s ({{ 'ollama' if is_ollama else 'llama-server' }})</span>
-                    <span class="metric-value" id="tok-prompt">
-                        {%- if active_stats and is_ollama -%}
-                            {{ active_stats.get('ollama_prompt_tokens_rate_avg', 0) | round(1) }}
-                        {%- elif active_stats -%}
-                            {{ active_stats.get('prompt_tokens_rate_avg', 0) | round(1) }}
+                    <span class="metric-label">Prompt tok/s (Ollama)</span>
+                    <span class="metric-value" id="tok-prompt-ollama">
+                        {%- if ollama and ollama | length > 0 and ollama.get('ollama_prompt_tokens_rate_avg') is not none -%}
+                            {{ ollama.get('ollama_prompt_tokens_rate_avg', 0) | round(1) }}
                         {%- else -%}
-                            0.0
+                            <span class="metric-value idle">idle</span>
                         {%- endif -%}
                     </span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Generation tok/s ({{ 'ollama' if is_ollama else 'llama-server' }})</span>
-                    <span class="metric-value" id="tok-generate">
-                        {%- if active_stats and is_ollama -%}
-                            {{ active_stats.get('ollama_generated_tokens_rate_avg', 0) | round(1) }}
-                        {%- elif active_stats -%}
-                            {{ active_stats.get('generated_tokens_rate_avg', 0) | round(1) }}
+                    <span class="metric-label">Generation tok/s (Ollama)</span>
+                    <span class="metric-value" id="tok-generate-ollama">
+                        {%- if ollama and ollama | length > 0 and ollama.get('ollama_generated_tokens_rate_avg') is not none -%}
+                            {{ ollama.get('ollama_generated_tokens_rate_avg', 0) | round(1) }}
                         {%- else -%}
-                            0.0
+                            <span class="metric-value idle">idle</span>
                         {%- endif -%}
                     </span>
                 </div>
-                {% if active_stats and not is_ollama and 'speculative_accepts_rate_avg' in active_stats %}
-                <div class="metric">
-                    <span class="metric-label">Speculative accepts/s (llama-server)</span>
-                    <span class="metric-value" id="tok-spec">{{ active_stats.get('speculative_accepts_rate_avg', 0) | round(1) }}</span>
-                </div>
-                {% endif %}
-                <div id="tok-last-rate" style="margin-top: 10px; font-size: 0.9em; color: #666; text-align: right;"></div>
+                <div id="tok-last-rate-ollama" style="margin-top: 10px; font-size: 0.9em; color: #666; text-align: right;"></div>
             </div>
             
             <!-- Loaded Model Card -->
@@ -479,81 +487,109 @@
                 const response = await fetch('/api/telemetry/latest');
                 if (!response.ok) return;
                 const data = await response.json();
-                // Determine which stats blob to use based on detected server type
-                // Treat zero-filled stats as 'no data' (empty dict has length 0)
-                let stats = null;
-                let serverType = detectedServerType || 'llama-server'; // use detected type, default to llama-server
                 
-                const llamaStats = data.llama_stats ? JSON.parse(data.llama_stats) : {};
-                const ollamaStats = data.ollama_stats ? JSON.parse(data.ollama_stats) : {};
-                
-                // Only use a stats blob if it has actual data (non-zero or non-empty)
-                // A zero-filled ollama stats blob is considered 'no data'
-                const hasLlamaData = llamaStats && Object.keys(llamaStats).length > 0;
-                const hasOllamaData = ollamaStats && Object.keys(ollamaStats).length > 0;
-                
-                if (serverType === 'ollama' && hasOllamaData) {
-                    stats = ollamaStats;
-                    serverType = 'ollama';
-                } else if (serverType === 'llama-server' && hasLlamaData) {
-                    stats = llamaStats;
-                    serverType = 'llama-server';
-                } else if (hasOllamaData) {
-                    stats = ollamaStats;
-                    serverType = 'ollama';
-                } else if (hasLlamaData) {
-                    stats = llamaStats;
-                    serverType = 'llama-server';
-                }
-                
-                // Update token speeds with averaged rates and idle state
-                const updateTokenSpeed = (id, key) => {
+                // Update llama.cpp/unsloth token speeds
+                const updateLlamaTokenSpeed = (id, key, lastRateId, lastTimeId) => {
                     const el = document.getElementById(id);
                     if (!el) return;
                     
-                    // Use rate_avg if available, otherwise fall back to rate
-                    let rate = stats ? (stats[key + '_avg'] ?? stats[key]) : 0;
-                    // Idle threshold: rates below 0.05 tok/s are considered idle
+                    let rate = 0;
+                    let hasData = false;
+                    if (data.llama_stats) {
+                        try {
+                            const llamaStats = JSON.parse(data.llama_stats);
+                            rate = llamaStats[key + '_avg'] ?? llamaStats[key] ?? 0;
+                            hasData = llamaStats && Object.keys(llamaStats).length > 0;
+                        } catch {
+                            rate = 0;
+                            hasData = false;
+                        }
+                    }
+                    
                     const idleThreshold = 0.05;
-                    const isIdle = rate === null || rate === undefined || rate === 0 || rate < idleThreshold;
+                    const isIdle = !hasData || rate === null || rate === undefined || rate === 0 || rate < idleThreshold;
                     
                     if (isIdle) {
-                        // Idle state
                         el.textContent = 'idle';
-                        el.style.color = '#666';
+                        el.className = 'metric-value idle';
                         
-                        // Track last non-zero rate for this specific metric
+                        // Track last non-zero rate
                         if (lastNonZeroRates[id] !== null && lastNonZeroTimes[id]) {
-                            const lastEl = document.getElementById('tok-last-rate');
+                            const lastEl = document.getElementById(lastRateId);
                             if (lastEl) {
                                 const age = Math.round((Date.now() - lastNonZeroTimes[id]) / 1000);
                                 lastEl.textContent = `Last: ${lastNonZeroRates[id]} tok/s · ${age}s ago`;
                             }
                         }
                     } else {
-                        // Active state - show rate with one decimal
                         el.textContent = rate.toFixed(1) + ' tok/s';
-                        el.style.color = '#00ff88';
+                        el.className = 'metric-value';
                         
-                        // Update last non-zero tracking for this metric
+                        // Update last non-zero tracking
                         lastNonZeroRates[id] = rate.toFixed(1);
                         lastNonZeroTimes[id] = Date.now();
                         
                         // Clear last rate display when active
-                        const lastEl = document.getElementById('tok-last-rate');
+                        const lastEl = document.getElementById(lastRateId);
                         if (lastEl) lastEl.textContent = '';
                     }
                 };
                 
-                if (serverType === 'llama-server') {
-                    updateTokenSpeed('tok-prompt', 'prompt_tokens_rate');
-                    updateTokenSpeed('tok-generate', 'generated_tokens_rate');
-                    updateTokenSpeed('tok-spec', 'speculative_accepts_rate');
-                } else {
-                    // Ollama: only prompt and generate rates (no speculative)
-                    updateTokenSpeed('tok-prompt', 'ollama_prompt_tokens_rate');
-                    updateTokenSpeed('tok-generate', 'ollama_generated_tokens_rate');
-                }
+                // Update ollama token speeds
+                const updateOllamaTokenSpeed = (id, key, lastRateId, lastTimeId) => {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    
+                    let rate = 0;
+                    let hasData = false;
+                    if (data.ollama_stats) {
+                        try {
+                            const ollamaStats = JSON.parse(data.ollama_stats);
+                            rate = ollamaStats[key + '_avg'] ?? ollamaStats[key] ?? 0;
+                            hasData = ollamaStats && Object.keys(ollamaStats).length > 0;
+                        } catch {
+                            rate = 0;
+                            hasData = false;
+                        }
+                    }
+                    
+                    const idleThreshold = 0.05;
+                    const isIdle = !hasData || rate === null || rate === undefined || rate === 0 || rate < idleThreshold;
+                    
+                    if (isIdle) {
+                        el.textContent = 'idle';
+                        el.className = 'metric-value idle';
+                        
+                        // Track last non-zero rate
+                        if (lastNonZeroRates[id] !== null && lastNonZeroTimes[id]) {
+                            const lastEl = document.getElementById(lastRateId);
+                            if (lastEl) {
+                                const age = Math.round((Date.now() - lastNonZeroTimes[id]) / 1000);
+                                lastEl.textContent = `Last: ${lastNonZeroRates[id]} tok/s · ${age}s ago`;
+                            }
+                        }
+                    } else {
+                        el.textContent = rate.toFixed(1) + ' tok/s';
+                        el.className = 'metric-value';
+                        
+                        // Update last non-zero tracking
+                        lastNonZeroRates[id] = rate.toFixed(1);
+                        lastNonZeroTimes[id] = Date.now();
+                        
+                        // Clear last rate display when active
+                        const lastEl = document.getElementById(lastRateId);
+                        if (lastEl) lastEl.textContent = '';
+                    }
+                };
+                
+                // Update llama.cpp/unsloth speeds
+                updateLlamaTokenSpeed('tok-prompt-llama', 'prompt_tokens_rate', 'tok-last-rate-llama', 'tok-last-time-llama');
+                updateLlamaTokenSpeed('tok-generate-llama', 'generated_tokens_rate', 'tok-last-rate-llama', 'tok-last-time-llama');
+                updateLlamaTokenSpeed('tok-spec-llama', 'speculative_accepts_rate', 'tok-last-rate-llama', 'tok-last-time-llama');
+                
+                // Update ollama speeds
+                updateOllamaTokenSpeed('tok-prompt-ollama', 'ollama_prompt_tokens_rate', 'tok-last-rate-ollama', 'tok-last-time-ollama');
+                updateOllamaTokenSpeed('tok-generate-ollama', 'ollama_generated_tokens_rate', 'tok-last-rate-ollama', 'tok-last-time-ollama');
                 
                 // Update telemetry spans (GPU and Memory)
                 

@@ -188,17 +188,26 @@
             </div>
             
             <div class="chart-card">
-                <h3>Token Generation Speed</h3>
+                <h3>llama.cpp tok/s</h3>
                 <div class="chart-wrapper">
-                    <canvas id="tok-s-chart"></canvas>
+                    <canvas id="llama-tok-s-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #00ff88;"></div>
+                        <span>llama.cpp tok/s</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>Ollama tok/s</h3>
+                <div class="chart-wrapper">
+                    <canvas id="ollama-tok-s-chart"></canvas>
                 </div>
                 <div class="chart-legend">
                     <div class="legend-item">
                         <div class="legend-color" style="background: #00d4ff;"></div>
-                        <span>llama.cpp tok/s</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color" style="background: #00ff88;"></div>
                         <span>Ollama tok/s</span>
                     </div>
                 </div>
@@ -294,7 +303,7 @@
                     chart.destroy();
                 }
             });
-            Object.keys(charts).forEach(key => charts[key] = null);
+            Object.keys(charts).forEach(key => delete charts[key]);
         }
         
         function createLineChart(ctx, datasets, labels) {
@@ -417,14 +426,18 @@
                 { label: 'Temperature', data: gpuTemp, borderColor: COLORS.gpuTemp, hoverBorderColor: COLORS.gpuTempHover, fill: false }
             ], timestamps);
             
-            // Tok/s chart (2 datasets)
+            // llama.cpp tok/s chart
             const llamaTokS = data.map(row => parseStats(row.llama_stats, 'generated_tokens_rate'));
-            const ollamaTokS = data.map(row => parseStats(row.ollama_stats, 'ollama_generated_tokens_rate'));
+            const llamaTokSCtx = document.getElementById('llama-tok-s-chart').getContext('2d');
+            charts.llamaTokS = createLineChart(llamaTokSCtx, [
+                { label: 'llama.cpp tok/s', data: llamaTokS, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false }
+            ], timestamps);
             
-            const tokSCtx = document.getElementById('tok-s-chart').getContext('2d');
-            charts.tokS = createLineChart(tokSCtx, [
-                { label: 'llama.cpp tok/s', data: llamaTokS, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false },
-                { label: 'Ollama tok/s', data: ollamaTokS, borderColor: COLORS.llama, hoverBorderColor: COLORS.llamaHover, fill: false }
+            // Ollama tok/s chart
+            const ollamaTokS = data.map(row => parseStats(row.ollama_stats, 'ollama_generated_tokens_rate'));
+            const ollamaTokSCtx = document.getElementById('ollama-tok-s-chart').getContext('2d');
+            charts.ollamaTokS = createLineChart(ollamaTokSCtx, [
+                { label: 'Ollama tok/s', data: ollamaTokS, borderColor: COLORS.ollama, hoverBorderColor: COLORS.ollamaHover, fill: false }
             ], timestamps);
             
             // GPU Util chart (1 dataset)
